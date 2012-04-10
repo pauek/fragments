@@ -11,14 +11,18 @@ import (
 	"fragments"
 )
 
-const T = `<div id="{{ .id }}" class="comments">
+var ct = `<div id="{{ .id }}" class="comments">
 <p>{{ .comment }}</p>
 by {{ .user }}
 </div>
 `
+var cT *template.Template
+
+func init() {
+	cT, _ = template.New("comment").Parse(ct)
+}
 
 func comments(id string) string {
-	cT, _ := template.New("comment").Parse(T)
 	var b bytes.Buffer
 	cT.Execute(&b, fragments.Values{
 		"id":      id,
