@@ -1,25 +1,24 @@
-
 package fragments
 
 import (
-	"io"
-	"fmt"
-	"time"
 	"bytes"
-	"strings"
-	"html/template"
 	"encoding/json"
+	"fmt"
+	"html/template"
+	"io"
+	"strings"
+	"time"
 )
 
 type UpdateFunc func(id string) string
 type Values map[string]interface{}
 
 var routes map[string]UpdateFunc
-var cache  map[string]*Fragment
+var cache map[string]*Fragment
 
 func init() {
 	routes = make(map[string]UpdateFunc)
-	cache  = make(map[string]*Fragment)
+	cache = make(map[string]*Fragment)
 }
 
 type Fragment struct {
@@ -34,12 +33,12 @@ type Fragment struct {
 
 func (frag *Fragment) update(fn UpdateFunc) {
 	// call update function
-	res := fn(frag.id) 
+	res := fn(frag.id)
 	frag.stamp = time.Now()
 
 	// collect children + insert placeholders
 	children := []string{}
-	fmap := map[string]interface{} {
+	fmap := map[string]interface{}{
 		"fragment": func(id string) string {
 			i := len(children)
 			children = append(children, id)
@@ -53,7 +52,7 @@ func (frag *Fragment) update(fn UpdateFunc) {
 	}
 	var text bytes.Buffer
 	tmpl.Execute(&text, nil)
-	
+
 	// compile final template
 	frag.text, err = template.New("frag").Parse(text.String())
 	if err != nil {
@@ -76,30 +75,30 @@ func (frag *Fragment) Render(w io.Writer) {
 		child.Render(&result)
 		children = append(children, template.HTML(result.String()))
 	}
-	frag.text.Execute(w, Values { "children": children })
+	frag.text.Execute(w, Values{"children": children})
 }
 
 func (frag *Fragment) ID() string {
 	return fmt.Sprintf("%s:%s", frag.kind, frag.id)
 }
 
-type DiffItem struct { id, html string }
+type DiffItem struct{ id, html string }
 
 func (d DiffItem) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]string { "id": d.id, "html": d.html })
+	return json.Marshal(map[string]string{"id": d.id, "html": d.html})
 }
 
 func (frag *Fragment) Diff(since time.Time) []DiffItem {
 	fmt.Println("Diff:", since)
 	D := []DiffItem{}
-	if (frag.stamp.After(since)) {
+	if frag.stamp.After(since) {
 		stubs := make([]template.HTML, len(frag.children))
 		for i := range frag.children {
 			stubs[i] = frag.children[i].Stub()
 		}
 		var b bytes.Buffer
-		frag.text.Execute(&b, Values { "children": stubs })
-		D = append(D, DiffItem{ id: frag.ID(), html: b.String() })
+		frag.text.Execute(&b, Values{"children": stubs})
+		D = append(D, DiffItem{id: frag.ID(), html: b.String()})
 	}
 	// call recursively
 	for i := range frag.children {
@@ -113,7 +112,7 @@ func (frag *Fragment) Diff(since time.Time) []DiffItem {
 
 func (frag *Fragment) Stub() template.HTML {
 	div := fmt.Sprintf("<div fragment=\"%s:%s\"></div>", frag.kind, frag.id)
-   return template.HTML(div)
+	return template.HTML(div)
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -129,10 +128,10 @@ func Get(id string) *Fragment {
 		panic(fmt.Sprintf("Malformed fragment ID: '%s'", id))
 	}
 	fn, ok := routes[parts[0]]
-	if ! ok {
+	if !ok {
 		panic(fmt.Sprintf("Fragment type '%s' not found", parts[0]))
 	}
-	frag := &Fragment{ kind: parts[0], id: parts[1], fn: fn, valid: false }
+	frag := &Fragment{kind: parts[0], id: parts[1], fn: fn, valid: false}
 	frag.update(fn)
 	cache[id] = frag
 	return frag
