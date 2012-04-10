@@ -13,13 +13,8 @@ import (
 type UpdateFunc func(id string) string
 type Values map[string]interface{}
 
-var routes map[string]UpdateFunc
-var cache map[string]*Fragment
-
-func init() {
-	routes = make(map[string]UpdateFunc)
-	cache = make(map[string]*Fragment)
-}
+var funcs = make(map[string]UpdateFunc)
+var cache = make(map[string]*Fragment)
 
 type Fragment struct {
 	kind     string
@@ -127,7 +122,7 @@ func Get(id string) *Fragment {
 	if len(parts) != 2 {
 		panic(fmt.Sprintf("Malformed fragment ID: '%s'", id))
 	}
-	fn, ok := routes[parts[0]]
+	fn, ok := funcs[parts[0]]
 	if !ok {
 		panic(fmt.Sprintf("Fragment type '%s' not found", parts[0]))
 	}
@@ -150,5 +145,5 @@ func Invalidate(id string) bool {
 }
 
 func Add(id string, fn UpdateFunc) {
-	routes[id] = fn
+	funcs[id] = fn
 }
