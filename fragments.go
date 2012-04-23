@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-type UpdateFunc func(id string) string
+type UpdateFunc func(id string) (string, error)
 type Values map[string]interface{}
 
 var funcs = make(map[string]UpdateFunc)
@@ -24,11 +24,16 @@ type Fragment struct {
 	text     *template.Template
 	fn       UpdateFunc
 	children []*Fragment
+	err      error
 }
 
 func (frag *Fragment) update(fn UpdateFunc) {
 	// call update function
-	res := fn(frag.id)
+	res, err := fn(frag.id)
+	if err != nil {
+		frag.err = err
+		return
+	}
 	frag.stamp = time.Now()
 
 	// collect children + insert placeholders
@@ -51,14 +56,19 @@ func (frag *Fragment) update(fn UpdateFunc) {
 	// compile final template
 	frag.text, err = template.New("frag").Parse(text.String())
 	if err != nil {
-		panic("Internal template error")
+		frag.err = err
+		return
 	}
 	frag.valid = true
 
 	// Get fragments recursively
 	frag.children = make([]*Fragment, len(children))
 	for i := range children {
-		frag.children[i] = Get(children[i])
+		frag.children[i], err = Get(children[i])
+		if err != nil {
+			frag.err = fmt.Errorf("Children %d fragment error: %s\n", i, err)
+			return
+		}
 	}
 }
 
@@ -80,7 +90,7 @@ func (frag *Fragment) ID() string {
 type DiffItem struct{ id, html string }
 
 func (d DiffItem) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]string{"id": d.id, "html": d.html})
+	return json.Marshal(map[string]string{"id": d.id, "html": d.html /*, timestamp */})
 }
 
 func (frag *Fragment) Diff(since time.Time) []DiffItem {
@@ -112,10 +122,13 @@ func (frag *Fragment) Stub() template.HTML {
 
 //////////////////////////////////////////////////////////////////////
 
-func Get(id string) *Fragment {
+func Get(id string) (F *Fragment, err error) {
 	if frag, ok := cache[id]; ok {
 		if frag.valid {
-			return frag
+			return frag, nil
+		}
+		if frag.err != nil {
+			return frag, frag.err
 		}
 	}
 	parts := strings.Split(id, ":")
@@ -129,7 +142,10 @@ func Get(id string) *Fragment {
 	frag := &Fragment{kind: parts[0], id: parts[1], fn: fn, valid: false}
 	frag.update(fn)
 	cache[id] = frag
-	return frag
+	if frag.err != nil {
+		return frag, frag.err
+	}
+	return frag, nil
 }
 
 func Ref(id string) template.HTML {
@@ -147,3 +163,12 @@ func Invalidate(id string) bool {
 func Add(id string, fn UpdateFunc) {
 	funcs[id] = fn
 }
+
+/*
+
+func init() {
+   http.Handle("/_fragment/", func ...)
+   http.Handle("/js/fragments.js", func ...)
+}
+
+*/
