@@ -22,7 +22,9 @@ func init() {
 	cT, _ = template.New("comment").Parse(ct)
 }
 
-func comments(id string) string {
+func comments(id string/*, ctx *fragments.Context */) string {
+	/* ctx.Depends(id, obj_id1) */
+	/* ctx.Depends(id, obj_id2) */
 	var b bytes.Buffer
 	cT.Execute(&b, fragments.Values{
 		"id":      id,
@@ -51,6 +53,15 @@ func main() {
 	fragments.Add("comments", comments)
 	fragments.Add("user", user)
 	fragments.Add("clock", clock)
+
+	/*
+	
+	layout := fragments.NewLayout(<template with fragment.Ref("root")>)
+	http.Handle("/post", func (w http.ResponseWriter, req *http.Request) {
+		layout.RenderRoot(w, "post:blabla") 
+	})
+
+	*/
 
 	frag := fragments.Get("comments:jarl")
 	frag.Render(os.Stdout)
