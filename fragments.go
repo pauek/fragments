@@ -4,66 +4,85 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
+	tmpl "html/template"
 	"os"
-	"strings"
 	"time"
 )
+
+var DebugInfo = true
+
+func log(format string, args ...interface{}) {
+	if DebugInfo {
+		fmt.Fprintf(os.Stderr, format, args...)
+	}
+}
 
 type Values map[string]interface{}
 
 type UpdateFunc func(id string) (string, error)
 
+type Ref struct {
+	Kid, Id string
+}
+
+func (R Ref) String() string {
+	return fmt.Sprintf("%s:%s", R.Kid, R.Id)
+}
+
 type Fragment struct {
-	kind     string
-	id       string
+	Ref
 	stamp    time.Time
 	valid    bool
-	text     *template.Template
-	children []string
+	text     *tmpl.Template
+	children []Ref
 	err      error
 }
 
-type Type struct {
+type Kind struct {
 	updatefn UpdateFunc
+	cache map[string]*Fragment
 }
 
+
 var (
-	types  = make(map[string]Type)
-	cache  = make(map[string]*Fragment)
-	depend = make(map[string]map[string]bool)
+	kinds  = make(map[string]Kind)
+	depend = make(map[string]map[Ref]bool)
 )
 
+
 func (frag *Fragment) update(fn UpdateFunc) {
+	log("update(%s:%s)\n", frag.Kid, frag.Id)
 	// call update function
-	res, err := fn(frag.id)
+	res, err := fn(frag.Id)
 	if err != nil {
+		log("err: %s\n", err)
 		frag.err = err
 		return
 	}
 	frag.stamp = time.Now()
 
 	// collect children + insert placeholders
-	children := []string{}
+	children := []Ref{}
 	fmap := map[string]interface{}{
-		"fragment": func(id string) string {
+		"fragment": func(kid, id string) string {
 			i := len(children)
-			children = append(children, id)
-			return fmt.Sprintf("{{ index .children %d }}", i)
+			children = append(children, Ref{kid, id})
+			log("Child %s of %s: %s:%s\n", i, frag.ID(), kid, id)
+			return fmt.Sprintf(`{{fragment "%s" "%s"}}`, kid, id)
 		},
 	}
-	tmpl, err := template.New("frag").Funcs(fmap).Parse(res)
+	t, err := tmpl.New("frag").Funcs(fmap).Parse(res)
 	if err != nil {
 		fmt.Println(err)
-		panic(fmt.Sprintf("Template for '%s' has errors", frag.kind))
+		panic(fmt.Sprintf("Template for '%s' has errors", frag.Kid))
 	}
 	var b bytes.Buffer
-	tmpl.Execute(&b, nil)
+	t.Execute(&b, nil)
 	text := fmt.Sprintf(`<div fragment="%s">%s</div>`, frag.ID(), b.String())
-	
+
 	// compile final template
-	frag.text, err = template.New("frag").Parse(text)
+	frag.text, err = tmpl.New("frag").Parse(text)
 	if err != nil {
 		frag.err = err
 		return
@@ -72,22 +91,8 @@ func (frag *Fragment) update(fn UpdateFunc) {
 	frag.children = children
 }
 
-func (frag *Fragment) Render(w io.Writer) {
-	children := []template.HTML{}
-	for i := range frag.children {
-		child, err := Get(frag.children[i])
-		if err != nil {
-			frag.err = fmt.Errorf("Children '%s' fragment error: %s\n", frag.children[i], err)
-		}
-		var result bytes.Buffer
-		child.Render(&result)
-		children = append(children, template.HTML(result.String()))
-	}
-	frag.text.Execute(w, Values{"children": children})
-}
-
 func (frag *Fragment) ID() string {
-	return fmt.Sprintf("%s:%s", frag.kind, frag.id)
+	return fmt.Sprintf("%s:%s", frag.Kid, frag.Id)
 }
 
 type DiffItem struct{ id, html string }
@@ -97,12 +102,15 @@ func (d DiffItem) MarshalJSON() ([]byte, error) {
 }
 
 func (frag *Fragment) Diff(since time.Time) []DiffItem {
-	fmt.Println("Diff:", since)
+	if DebugInfo {
+		fmt.Println("Diff:", since)
+	}
 	D := []DiffItem{}
 	if frag.stamp.After(since) {
-		stubs := make([]template.HTML, len(frag.children))
+		stubs := make([]tmpl.HTML, len(frag.children))
 		for i := range frag.children {
-			child, err := Get(frag.children[i])
+			ref := frag.children[i]
+			child, err := get(ref.Kid, ref.Id)
 			if err != nil {
 				panic("Cannot get child!")
 			}
@@ -114,7 +122,8 @@ func (frag *Fragment) Diff(since time.Time) []DiffItem {
 	}
 	// call recursively
 	for i := range frag.children {
-		child, err := Get(frag.children[i])
+		ref := frag.children[i]
+		child, err := get(ref.Kid, ref.Id)
 		if err != nil {
 			panic("Cannot get child!")
 		}
@@ -126,9 +135,9 @@ func (frag *Fragment) Diff(since time.Time) []DiffItem {
 	return D
 }
 
-func (frag *Fragment) Stub() template.HTML {
-	div := fmt.Sprintf("<div fragment=\"%s:%s\"></div>", frag.kind, frag.id)
-	return template.HTML(div)
+func (frag *Fragment) Stub() tmpl.HTML {
+	div := fmt.Sprintf("<div fragment=\"%s:%s\"></div>", frag.Kid, frag.Id)
+	return tmpl.HTML(div)
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -136,55 +145,54 @@ func (frag *Fragment) Stub() template.HTML {
 // Register a type of fragment. The ID of the type is a prefix of the
 // fragment ID. For instance, a fragment 'user:pauek' has type 'user'.
 //
-func Add(typId string, fn UpdateFunc) {
-	types[typId] = Type{updatefn: fn}
+func Add(kid string, fn UpdateFunc) {
+	kinds[kid] = Kind{
+		updatefn: fn,
+		cache: make(map[string]*Fragment),
+	}
 }
 
 // Get a fragment from cache. If it exists and is valid, it is
 // returned immediately.  Otherwise it is first updated.
 //
-func Get(id string) (F *Fragment, err error) {
-	if frag, ok := cache[id]; ok {
-		if frag.valid {
-			return frag, nil
-		}
+func get(kid, id string) (F *Fragment, err error) {
+	kind, ok := kinds[kid]
+	if !ok {
+		panic(fmt.Sprintf("Fragment type '%s' not found", kid))
+	}
+	if frag, ok := kind.cache[id]; ok {
 		if frag.err != nil {
 			return frag, frag.err
 		}
+		if frag.valid {
+			return frag, nil
+		}
 	}
-	parts := strings.Split(id, ":")
-	if len(parts) != 2 {
-		panic(fmt.Sprintf("Malformed fragment ID: '%s'", id))
-	}
-	typ, ok := types[parts[0]]
-	if !ok {
-		panic(fmt.Sprintf("Fragment type '%s' not found", parts[0]))
-	}
-	fn := typ.updatefn
-	frag := &Fragment{kind: parts[0], id: parts[1], valid: false}
+	fn := kind.updatefn
+	frag := &Fragment{valid: false}
+	frag.Kid = kid
+	frag.Id = id
 	frag.update(fn)
-	cache[id] = frag
+	kind.cache[id] = frag
 	if frag.err != nil {
 		return frag, frag.err
 	}
 	return frag, nil
 }
 
-// Create a reference to another fragment to put in a template.
-//
-func Ref(id string) template.HTML {
-	return template.HTML(fmt.Sprintf(`{{ "%s" | fragment }}`, id))
-}
-
 // invalidate all fragments depending on the object with 'id'
 //
-func Invalidate(objId string) {
-	fmt.Fprintf(os.Stderr, "Invalidate(%s)\n", objId)
-	if fragIds, ok := depend[objId]; ok {
-		for fragId := range fragIds {
-			fmt.Fprintf(os.Stderr, "checking '%s'\n", fragId)
-			if frag, found := cache[fragId]; found {
-				fmt.Fprintf(os.Stderr, "Invalidate '%s' -> '%s'\n", objId, fragId)
+func Invalidate(id string) {
+	log("Invalidate(%s)\n", id)
+	if fragrefs, ok := depend[id]; ok {
+		for ref := range fragrefs {
+			log("Checking '%s:%s'\n", ref.Kid, ref.Id)
+			kind, found := kinds[ref.Kid]
+			if !found {
+				panic(fmt.Sprintf("Fragment type '%s' not found", ref.Kid))
+			}
+			if frag, found := kind.cache[ref.Id]; found {
+				log("Invalidate '%s' -> '%s:%s'\n", id, ref.Kid, ref.Id)
 				frag.valid = false
 			}
 		}
@@ -195,13 +203,69 @@ func Invalidate(objId string) {
 // fragment with id 'fragId'. When Invalidate is called with 'objId',
 // all fragments with a Declared dependency will be updated.
 //
-func Depends(fragId, objId string) {
+func Depends(ref Ref, objId string) {
 	if _, ok := depend[objId]; !ok {
-		depend[objId] = make(map[string]bool)
+		depend[objId] = make(map[Ref]bool)
 	}
-	depend[objId][fragId] = true
-	fmt.Fprintf(os.Stderr, "Depends[%s] = %v\n", objId, depend[objId])
+	depend[objId][ref] = true
+	log("Depends[%s] = %v\n", objId, depend[objId])
 }
+
+func Each(fn func(id string, f *Fragment)) {
+	for kid, kind := range kinds {
+		for id, f := range kind.cache {
+			fn(kid+":"+id, f)
+		}
+	}
+}
+
+func Parse(t *tmpl.Template, text string) (*tmpl.Template, error) {
+	var fmap = tmpl.FuncMap{
+		"fragment": func () (tmpl.HTML, error) {
+			return tmpl.HTML("Error: placeholder function"), nil
+		},
+	}
+	tp, err := t.Funcs(fmap).Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	return tp, nil
+}
+
+// the payload is passed to any fragment function updating
+func Execute(w io.Writer, t *tmpl.Template, v Values, payload interface{}) error {
+	var fmap = tmpl.FuncMap{}
+	fmap["fragment"] = func(ids ...interface{}) (tmpl.HTML, error) {
+		log("==> fragment(%v)\n", ids)
+		var kid, id string
+		switch len(ids) {
+		case 2: 
+			kid, id = ids[0].(string), ids[1].(string)
+		case 1:
+			kid, id = ids[0].(string), ""
+		default:
+			return "", fmt.Errorf("Wrong number of arguments for 'fragment'")
+		}			
+		frag, err := get(kid, id)
+		if err != nil {
+			return "", err
+		}
+		var b bytes.Buffer
+		frag.text.Funcs(fmap).Execute(&b, nil)
+		return tmpl.HTML(b.String()), nil
+	}
+	return t.Funcs(fmap).Execute(w, v)
+}
+
+func Render(t *tmpl.Template, v Values, payload interface{}) (string, error) {
+	var b bytes.Buffer
+	err := Execute(&b, t, v, payload)
+	if err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
 
 /*
 
