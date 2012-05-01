@@ -51,3 +51,21 @@ func TestGet(t *testing.T) {
 		t.Errorf("Wrong output")
 	}
 }
+
+func TestExecute(t *testing.T) {
+	Add("test", Generator{
+		Func: func(id string, data interface{}) (Fragment, []string, error) {
+			return Fragment("test(" + id + ")"), nil, nil
+		},
+	})
+	C := NewCache(nil)
+	f := Fragment(`This is it: {{test:blah}}`)
+	var b bytes.Buffer
+	err := C.Execute(&f, &b)
+	if err != nil {
+		t.Errorf("Unexpected error: %s", err)
+	}
+	if b.String() != "This is it: test(blah)" {
+		t.Errorf("Wrong output: %s", b.String())
+	}
+}
