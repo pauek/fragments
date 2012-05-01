@@ -116,8 +116,10 @@ func (E *Environ) make(typ, id string) *Fragment {
 	if !ok {
 		panic(fmt.Sprintf("No generator found for type '%s'", typ))
 	}
-	text, _, err := generator.Func(id)
-	// TODO: handle deps
+	text, deps, err := generator.Func(id)
+	for _, d := range deps {
+		depends(d, frag)
+	}
 	if err != nil {
 		frag.err = err
 		return frag
@@ -143,8 +145,10 @@ func (E *Environ) Get(typ, id string) *Fragment {
 		layer = E.NewLayer(generator.Layer)
 	}
 	fragment, ok3 := layer.fragments[typ+":"+id]
-	if !ok3 {
+	if !ok3 || !fragment.valid {
+		fmt.Printf("make(%s, %s)\n", typ, id)
 		fragment = E.make(typ, id)
+		layer.fragments[typ+":"+id] = fragment
 	}
 	return fragment
 }
@@ -170,3 +174,21 @@ func PreRender(text string, values Values) (string, error) {
 func (E *Environ) Execute(t *tmpl.Template, w io.Writer, data interface{}) error {
 	return t.Funcs(fmap(E)).Execute(w, data)
 }
+
+// Invalidation
+
+var deps = make(map[string][]*Fragment)
+
+func depends(id string, frag *Fragment) {
+	deps[id] = append(deps[id], frag)
+}
+
+func Invalidate(id string) {
+	if fraglist, ok := deps[id]; ok {
+		for _, f := range fraglist {
+			fmt.Printf("Invalidate!\n")
+			f.valid = false
+		}
+	}
+}
+

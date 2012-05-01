@@ -96,4 +96,30 @@ func TestMultipleFragments(t *testing.T) {
 	}
 }
 
-// Test Layers
+// Test invalidation
+func TestInvalidation(t *testing.T) {
+	var a = 1
+	env := NewEnviron()
+	Add("a", Generator{
+		Func: func(id string) (string, []string, error) {
+			return fmt.Sprintf("Value = %d", a), []string{"a"}, nil
+		},
+	})
+	test := func (expect string) {
+		f := env.Get("a", "")
+		res, err := f.Render(env)
+		if err != nil{
+			t.Errorf("Should not give error")
+		}
+		if res != expect {
+			t.Errorf("Wrong output")
+		}
+	}
+
+	test("Value = 1")
+	a = 2
+	test("Value = 1")
+	Invalidate("a")
+	test("Value = 2")
+}
+
