@@ -71,25 +71,6 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 	return &item.frag, nil
 }
 
-func PreRender(text string, v Values) (*Fragment, error) {
-	fmap := map[string]interface{}{
-		"fragment": func(typ, id interface{}) string {
-			return fmt.Sprintf("{{%s:%s}}", typ, id)
-		},
-	}
-	t, err := template.New("").Funcs(fmap).Parse(text)
-	if err != nil {
-		return nil, fmt.Errorf("Parse error: %s", err)
-	}
-	var b bytes.Buffer
-	err = t.Execute(&b, v)
-	if err != nil {
-		return nil, fmt.Errorf("Exec error: %s", err)
-	}
-	f := Fragment(b.String())
-	return &f, nil
-}
-
 func (C *Cache) Execute(f *Fragment, w io.Writer) error {
 	s := string(*f)
 	for {
@@ -117,4 +98,23 @@ func (C *Cache) Execute(f *Fragment, w io.Writer) error {
 	}
 	w.Write([]byte(s))
 	return nil
+}
+
+func PreRender(text string, v Values) (*Fragment, error) {
+	fmap := map[string]interface{}{
+		"fragment": func(typ, id interface{}) string {
+			return fmt.Sprintf("{{%s:%s}}", typ, id)
+		},
+	}
+	t, err := template.New("").Funcs(fmap).Parse(text)
+	if err != nil {
+		return nil, fmt.Errorf("Parse error: %s", err)
+	}
+	var b bytes.Buffer
+	err = t.Execute(&b, v)
+	if err != nil {
+		return nil, fmt.Errorf("Exec error: %s", err)
+	}
+	f := Fragment(b.String())
+	return &f, nil
 }
