@@ -48,7 +48,7 @@ func (frag *Fragment) Render(env *Environ) (text string, err error) {
 
 // Generators
 
-type GenFunc func(id string) (string, []string, error)
+type GenFunc func(env *Environ, id string) (string, []string, error)
 
 type Generator struct {
 	Layer string
@@ -70,11 +70,14 @@ type Layer struct {
 
 type Environ struct {
 	layers map[string]*Layer
+	parent *Environ
+	Data   interface{}
 }
 
-func NewEnviron() *Environ {
+func NewEnviron(parent *Environ) *Environ {
 	E := &Environ{
 		layers: make(map[string]*Layer),
+		parent: parent,
 	}
 	root := &Layer{
 		id:        "",
@@ -95,8 +98,8 @@ func (E *Environ) NewLayer(id string) *Layer {
 
 func fmap(E *Environ) map[string]interface{} {
 	return map[string]interface{}{
-		"fragment": func(typ, id string) (string, error) {
-			frag := E.Get(typ, id)
+		"fragment": func(typ, id interface{}) (string, error) {
+			frag := E.Get(typ.(string), id.(string))
 			if frag == nil {
 				return "", fmt.Errorf("ERROR: Not found: '%s:%s'", typ, id)
 			}
@@ -116,7 +119,7 @@ func (E *Environ) make(typ, id string) *Fragment {
 	if !ok {
 		panic(fmt.Sprintf("No generator found for type '%s'", typ))
 	}
-	text, deps, err := generator.Func(id)
+	text, deps, err := generator.Func(E, id)
 	for _, d := range deps {
 		depends(d, frag)
 	}
@@ -146,7 +149,6 @@ func (E *Environ) Get(typ, id string) *Fragment {
 	}
 	fragment, ok3 := layer.fragments[typ+":"+id]
 	if !ok3 || !fragment.valid {
-		fmt.Printf("make(%s, %s)\n", typ, id)
 		fragment = E.make(typ, id)
 		layer.fragments[typ+":"+id] = fragment
 	}
@@ -154,12 +156,7 @@ func (E *Environ) Get(typ, id string) *Fragment {
 }
 
 func PreRender(text string, values Values) (string, error) {
-	fmap := map[string]interface{}{
-		"fragment": func (typ, id interface{}) tmpl.HTML {
-			return tmpl.HTML(fmt.Sprintf(`{{fragment "%s" "%s"}}`, typ, id))
-		},
-	}
-	tmpl, err := tmpl.New("").Funcs(fmap).Parse(text)
+	tmpl, err := Parse(text)
 	if err != nil {
 		return "", nil
 	}
@@ -171,8 +168,17 @@ func PreRender(text string, values Values) (string, error) {
 	return b.String(), nil
 }
 
-func (E *Environ) Execute(t *tmpl.Template, w io.Writer, data interface{}) error {
-	return t.Funcs(fmap(E)).Execute(w, data)
+func Parse(text string) (*tmpl.Template, error) {
+	fmap := map[string]interface{}{
+		"fragment": func(typ, id interface{}) tmpl.HTML {
+			return tmpl.HTML(fmt.Sprintf(`{{fragment "%s" "%s"}}`, typ, id))
+		},
+	}
+	return tmpl.New("").Funcs(fmap).Parse(text)
+}
+
+func (E *Environ) Execute(t *tmpl.Template, w io.Writer, v interface{}) error {
+	return t.Funcs(fmap(E)).Execute(w, v)
 }
 
 // Invalidation
@@ -186,9 +192,7 @@ func depends(id string, frag *Fragment) {
 func Invalidate(id string) {
 	if fraglist, ok := deps[id]; ok {
 		for _, f := range fraglist {
-			fmt.Printf("Invalidate!\n")
 			f.valid = false
 		}
 	}
 }
-
