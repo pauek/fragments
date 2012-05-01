@@ -1,6 +1,7 @@
 package fragments
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 )
@@ -14,8 +15,14 @@ func TestPreRender(t *testing.T) {
 	if err != nil {
 		t.Errorf("PreRender error: %s\n", err)
 	}
-	if string(f) != "Hola pauek, que tal {{jarl:demor}}" {
+	if string(*f) != "Hola pauek, que tal {{jarl:demor}}" {
 		t.Errorf("Wrong output")
+	}
+	C := NewCache("blah")
+	var b bytes.Buffer
+	err = C.Execute(f, &b)
+	if err == nil {
+		t.Errorf("There should be an error")
 	}
 }
 
@@ -31,7 +38,16 @@ func TestGet(t *testing.T) {
 	if err != nil {
 		t.Errorf("Cannot get item")
 	}
-	if string(*f) != "[hi, there] This is item number two" {
+	res := "[hi, there] This is item number two"
+	if string(*f) != res {
+		t.Errorf("Wrong output")
+	}
+	var b bytes.Buffer
+	err = C.Execute(f, &b)
+	if err != nil {
+		t.Errorf("Unexpected error: %s", err)
+	}
+	if b.String() != res {
 		t.Errorf("Wrong output")
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"io"
+	"strings"
 	"time"
 )
 
@@ -40,7 +42,7 @@ type Cache struct {
 
 func NewCache(data interface{}) *Cache {
 	return &Cache{
-		data: data,
+		data:  data,
 		cache: make(map[string]*CacheItem),
 	}
 }
@@ -69,7 +71,7 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 	return &item.frag, nil
 }
 
-func PreRender(text string, v Values) (Fragment, error) {
+func PreRender(text string, v Values) (*Fragment, error) {
 	fmap := map[string]interface{}{
 		"fragment": func(typ, id interface{}) string {
 			return fmt.Sprintf("{{%s:%s}}", typ, id)
@@ -77,12 +79,42 @@ func PreRender(text string, v Values) (Fragment, error) {
 	}
 	t, err := template.New("").Funcs(fmap).Parse(text)
 	if err != nil {
-		return Fragment(""), fmt.Errorf("Parse error: %s", err)
+		return nil, fmt.Errorf("Parse error: %s", err)
 	}
 	var b bytes.Buffer
 	err = t.Execute(&b, v)
 	if err != nil {
-		return Fragment(""), fmt.Errorf("Exec error: %s", err)
+		return nil, fmt.Errorf("Exec error: %s", err)
 	}
-	return Fragment(b.String()), nil
+	f := Fragment(b.String())
+	return &f, nil
+}
+
+func (C *Cache) Execute(f *Fragment, w io.Writer) error {
+	s := string(*f)
+	for {
+		i := strings.Index(s, "{{")
+		if i == -1 {
+			break
+		}
+		w.Write([]byte(s[:i]))
+		j := strings.Index(s, "}}")
+		if j == -1 {
+			return fmt.Errorf("Execute: unmatched '{{'")
+		}
+		id := s[i+2 : j]
+		parts := strings.Split(id, ":")
+		if len(parts) != 2 {
+			return fmt.Errorf("Execute: fid is not '<typ>:<id>'")
+		}
+		typ, id := parts[0], parts[1]
+		f, err := C.Get(typ, id)
+		if err != nil {
+			return fmt.Errorf("Execute: Cannot Get '%s:%s': %s", typ, id, err)
+		}
+		C.Execute(f, w)
+		s = s[j+2:]
+	}
+	w.Write([]byte(s))
+	return nil
 }
