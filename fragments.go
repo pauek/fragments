@@ -14,7 +14,7 @@ type Values map[string]interface{}
 
 // Registry
 
-type GenFunc func(id string, data interface{}) (Fragment, []string, error)
+type GenFunc func(id string, data interface{}) (*Fragment, []string, error)
 
 type Generator struct {
 	Func  GenFunc
@@ -30,7 +30,7 @@ func Add(typ string, gen Generator) {
 // Fragments
 
 type CacheItem struct {
-	frag      Fragment
+	frag      *Fragment
 	valid     bool
 	timestamp time.Time
 }
@@ -68,7 +68,7 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 		}
 		C.cache[fid] = item
 	}
-	return &item.frag, nil
+	return item.frag, nil
 }
 
 func (C *Cache) Execute(f *Fragment, w io.Writer) error {

@@ -28,9 +28,9 @@ func TestPreRender(t *testing.T) {
 
 func TestGet(t *testing.T) {
 	Add("item", Generator{
-		Func: func(id string, data interface{}) (Fragment, []string, error) {
+		Func: func(id string, data interface{}) (*Fragment, []string, error) {
 			f := Fragment(fmt.Sprintf("[%s] This is item %s", data, id))
-			return f, nil, nil
+			return &f, nil, nil
 		},
 	})
 	C := NewCache("hi, there")
@@ -54,18 +54,49 @@ func TestGet(t *testing.T) {
 
 func TestExecute(t *testing.T) {
 	Add("test", Generator{
-		Func: func(id string, data interface{}) (Fragment, []string, error) {
-			return Fragment("test(" + id + ")"), nil, nil
+		Func: func(id string, data interface{}) (*Fragment, []string, error) {
+			f := Fragment("test(" + id + ")")
+			return &f, nil, nil
 		},
 	})
 	C := NewCache(nil)
 	f := Fragment(`This is it: {{test:blah}}`)
 	var b bytes.Buffer
-	err := C.Execute(&f, &b)
-	if err != nil {
+	if err := C.Execute(&f, &b); err != nil {
 		t.Errorf("Unexpected error: %s", err)
 	}
 	if b.String() != "This is it: test(blah)" {
 		t.Errorf("Wrong output: %s", b.String())
+	}
+}
+
+func TestExecute2(t *testing.T) {
+	Add("a", Generator{
+		Func: func(id string, data interface{}) (*Fragment, []string, error) {
+			f, err := PreRender(`whoa, a frag {{fragment "b" .id}}`, Values{
+				"id": id,
+			})
+			if err != nil {
+				return nil, nil, err
+			}
+			return f, nil, nil
+		},
+	})
+	Add("b", Generator{
+		Func: func(id string, data interface{}) (*Fragment, []string, error) {
+			f := Fragment(`like "b with ` + id + `"`)
+			return &f, nil, nil
+		},
+	})
+	C := NewCache(nil)
+	f := Fragment(`before {{a:hey}} middle {{a:ho}} after`)
+	var b bytes.Buffer
+	if err := C.Execute(&f, &b); err != nil {
+		t.Errorf("Unexpected error: %s", err)
+	}
+	s := `before whoa, a frag like "b with hey" middle `
+	s += `whoa, a frag like "b with ho" after`
+	if b.String() != s {
+		t.Errorf("Wrong output")
 	}
 }
