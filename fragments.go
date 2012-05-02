@@ -152,7 +152,7 @@ func (C *Cache) RenderLayers(f *Fragment, lyrs Layers) (string, error) {
 	return b.String(), nil
 }
 
-func PreRender(text string, v Values) (*Fragment, error) {
+func Parse(text string) (*template.Template, error) {
 	fmap := map[string]interface{}{
 		"fragment": func(typ, id interface{}) string {
 			return fmt.Sprintf("{{%s:%s}}", typ, id)
@@ -161,6 +161,14 @@ func PreRender(text string, v Values) (*Fragment, error) {
 	t, err := template.New("").Funcs(fmap).Parse(text)
 	if err != nil {
 		return nil, fmt.Errorf("Parse error: %s", err)
+	}
+	return t, nil
+}
+
+func PreRender(text string, v Values) (*Fragment, error) {
+	t, err := Parse(text)
+	if err != nil {
+		return nil, err
 	}
 	var b bytes.Buffer
 	err = t.Execute(&b, v)
