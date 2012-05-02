@@ -33,6 +33,7 @@ type CacheItem struct {
 	frag      *Fragment
 	valid     bool
 	timestamp time.Time
+	depends   []string
 }
 
 type Cache struct {
@@ -56,7 +57,7 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 			return nil, fmt.Errorf("Type '%s' not found", typ)
 		}
 		// TODO: handle deps
-		frag, _, err := gen.Func(id, C.data)
+		frag, deps, err := gen.Func(id, C.data)
 		if err != nil {
 			msg := "Generation error for '%s:%s': %s\n"
 			return nil, fmt.Errorf(msg, typ, id, err)
@@ -65,6 +66,10 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 			frag:      frag,
 			valid:     true,
 			timestamp: time.Now(),
+			depends: deps,
+		}
+		for _, oid := range deps {
+			depends(item, oid)
 		}
 		C.cache[fid] = item
 	}
@@ -166,6 +171,32 @@ func PreRender(text string, v Values) (*Fragment, error) {
 	return &f, nil
 }
 
-func Invalidate(id string) {
-	// TODO
+// Invalidation
+
+var deps = make(map[string][]*CacheItem)
+
+func depends(item *CacheItem, id string) {
+	deps[id] = append(deps[id], item)
 }
+
+func Invalidate(id string) {
+	if itemlist, ok := deps[id]; ok {
+		for _, item := range itemlist {
+			item.valid = false;
+		}
+	}
+}
+
+/* 
+ TODO:
+
+ - Diff: Given a fragment, return a diff list of its children.
+
+ - Remove framents (by date?)
+
+ - If a Cache is GCd, its items might be referenced in 'deps', 
+   so there is a memory leak here.
+
+ - Set a limit in bytes for the cache (?)
+
+*/
