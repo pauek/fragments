@@ -24,7 +24,7 @@ func TestPreRender(t *testing.T) {
 	}
 	C := NewCache("blah")
 	var b bytes.Buffer
-	err = C.Execute(f, &b)
+	err = C.Execute(&b, f)
 	if err == nil {
 		t.Errorf("There should be an error")
 	}
@@ -47,7 +47,7 @@ func TestGet(t *testing.T) {
 		t.Errorf("Wrong output")
 	}
 	var b bytes.Buffer
-	err = C.Execute(f, &b)
+	err = C.Execute(&b, f)
 	if err != nil {
 		t.Errorf("Unexpected error: %s", err)
 	}
@@ -66,7 +66,7 @@ func TestExecute(t *testing.T) {
 	C := NewCache(nil)
 	f := Fragment(`This is it: {{test:blah}}`)
 	var b bytes.Buffer
-	if err := C.Execute(&f, &b); err != nil {
+	if err := C.Execute(&b, &f); err != nil {
 		t.Errorf("Unexpected error: %s", err)
 	}
 	if b.String() != "This is it: test(blah)" {
@@ -100,7 +100,7 @@ func TestExecute2(t *testing.T) {
 	C := NewCache(nil)
 	f := Fragment(`before {{a:hey}} middle {{a:ho}} after`)
 	var b bytes.Buffer
-	if err := C.Execute(&f, &b); err != nil {
+	if err := C.Execute(&b, &f); err != nil {
 		t.Errorf("Unexpected error: %s", err)
 	}
 	s := `before whoa, a frag like "b with hey" middle `

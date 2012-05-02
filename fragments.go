@@ -48,6 +48,12 @@ func NewCache(data interface{}) *Cache {
 	}
 }
 
+func (C *Cache) Each(fn func (id string, f *Fragment)) {
+	for id, item := range C.cache {
+		fn(id, item.frag)
+	}
+}
+
 func (C *Cache) Get(typ, id string) (*Fragment, error) {
 	fid := typ + ":" + id
 	item, ok := C.cache[fid]
@@ -111,11 +117,20 @@ func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
 	return nil
 }
 
-func (C *Cache) Execute(f *Fragment, w io.Writer) error {
+func (C *Cache) Execute(w io.Writer, f *Fragment) error {
 	return C.exec(f, w, func (typ, id string) (*Fragment, error) {
 		return C.Get(typ, id)
 	})
 }
+
+func (C *Cache) ExecuteTemplate(w io.Writer, tmpl *template.Template, v Values) error {
+	frag, err := PreRender(tmpl, v)
+	if err != nil {
+		return err
+	}
+	return C.Execute(w, frag)
+}
+
 
 type Layers map[string]*Cache
 
@@ -137,7 +152,7 @@ func (C *Cache) ExecuteLayers(f *Fragment, w io.Writer, layers Layers) error {
 
 func (C *Cache) Render(f *Fragment) (string, error) {
 	var b bytes.Buffer
-	if err := C.Execute(f, &b); err != nil {
+	if err := C.Execute(&b, f); err != nil {
 		return "", err
 	}
 	return b.String(), nil
@@ -165,6 +180,8 @@ func Parse(text string) (*template.Template, error) {
 	return t, nil
 }
 
+// Execute a template, embedding all values, except
+// references to fragments
 func PreRender(t *template.Template, v Values) (*Fragment, error) {
 	var b bytes.Buffer
 	err := t.Execute(&b, v)
