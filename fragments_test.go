@@ -149,3 +149,35 @@ func TestLayers(t *testing.T) {
 		t.Errorf("Wrong number of fragments")
 	}
 }
+
+func TestInvalidation(t *testing.T) {
+	var a int = 1
+
+	Add("f", Generator{
+	Func: func(id string, data interface{}) (*Fragment, []string, error) {
+			f := Fragment(fmt.Sprintf("a = %d", a))
+			return &f, []string{"a"}, nil
+		},
+	})
+	
+	C := NewCache(nil)
+	f := Fragment(`{{f}}`)
+
+	test := func (expected string) {
+		s, err := C.Render(&f)
+		if err != nil {
+			t.Errorf("Unexpected error: %s", err)
+		}
+		if s != expected {
+			t.Errorf("Wrong output '%s' (should be '%s')", s, expected)
+		}
+	}
+
+	test("a = 1")
+	Invalidate("a")
+	test("a = 1")
+	a = 2
+	test("a = 1")
+	Invalidate("a")
+	test("a = 2")
+}

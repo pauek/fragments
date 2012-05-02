@@ -86,11 +86,13 @@ func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
 			return fmt.Errorf("Execute: unmatched '{{'")
 		}
 		id := s[i+2 : j]
-		parts := strings.Split(id, ":")
-		if len(parts) != 2 {
-			return fmt.Errorf("Execute: fid is not '<typ>:<id>'")
+		k := strings.Index(id, ":")
+		var typ string
+		if k == -1 {
+			typ, id = id, ""
+		} else {
+			typ, id = id[:k], id[k+1:]
 		}
-		typ, id := parts[0], parts[1]
 		f, err := fn(typ, id)
 		if err != nil {
 			return fmt.Errorf("Execute: Cannot Get '%s:%s': %s", typ, id, err)
@@ -162,4 +164,8 @@ func PreRender(text string, v Values) (*Fragment, error) {
 	}
 	f := Fragment(b.String())
 	return &f, nil
+}
+
+func Invalidate(id string) {
+	// TODO
 }
