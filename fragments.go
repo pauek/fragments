@@ -169,8 +169,12 @@ func (C *Cache) RenderLayers(f *Fragment, lyrs Layers) (string, error) {
 
 func Parse(text string) (*template.Template, error) {
 	fmap := map[string]interface{}{
-		"fragment": func(typ, id interface{}) string {
-			return fmt.Sprintf("{{%s:%s}}", typ, id)
+		"fragment": func(ids ...interface{}) string {
+			sids := make([]string, len(ids))
+			for i, id := range ids {
+				sids[i] = fmt.Sprintf("%v", id)
+			}
+			return fmt.Sprintf("{{%s}}", strings.Join(sids, ":"))
 		},
 	}
 	t, err := template.New("").Funcs(fmap).Parse(text)
