@@ -7,7 +7,11 @@ import (
 )
 
 func TestPreRender(t *testing.T) {
-	f, err := PreRender(`Hola {{.user}}, que tal {{fragment .typ .id}}`, Values{
+	tmpl, err := Parse(`Hola {{.user}}, que tal {{fragment .typ .id}}`)
+	if err != nil {
+		t.Errorf("Parse error: %s\n", err)
+	}
+	f, err := PreRender(tmpl, Values{
 		"user": "pauek",
 		"typ":  "jarl",
 		"id":   "demor",
@@ -71,9 +75,14 @@ func TestExecute(t *testing.T) {
 }
 
 func TestExecute2(t *testing.T) {
+	tmpl, err := Parse(`whoa, a frag {{fragment "b" .id}}`)
+	if err != nil {
+		t.Errorf("Parse error: %s\n", err)
+	}
+	
 	Add("a", Generator{
 		Func: func(id string, data interface{}) (*Fragment, []string, error) {
-			f, err := PreRender(`whoa, a frag {{fragment "b" .id}}`, Values{
+			f, err := PreRender(tmpl, Values{
 				"id": id,
 			})
 			if err != nil {

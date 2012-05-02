@@ -165,13 +165,9 @@ func Parse(text string) (*template.Template, error) {
 	return t, nil
 }
 
-func PreRender(text string, v Values) (*Fragment, error) {
-	t, err := Parse(text)
-	if err != nil {
-		return nil, err
-	}
+func PreRender(t *template.Template, v Values) (*Fragment, error) {
 	var b bytes.Buffer
-	err = t.Execute(&b, v)
+	err := t.Execute(&b, v)
 	if err != nil {
 		return nil, fmt.Errorf("Exec error: %s", err)
 	}
