@@ -71,7 +71,9 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 	return item.frag, nil
 }
 
-func (C *Cache) Execute(f *Fragment, w io.Writer) error {
+type getFn func(typ, id string) (*Fragment, error)
+
+func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
 	s := string(*f)
 	for {
 		i := strings.Index(s, "{{")
@@ -89,15 +91,58 @@ func (C *Cache) Execute(f *Fragment, w io.Writer) error {
 			return fmt.Errorf("Execute: fid is not '<typ>:<id>'")
 		}
 		typ, id := parts[0], parts[1]
-		f, err := C.Get(typ, id)
+		f, err := fn(typ, id)
 		if err != nil {
 			return fmt.Errorf("Execute: Cannot Get '%s:%s': %s", typ, id, err)
 		}
-		C.Execute(f, w)
+		if err := C.exec(f, w, fn); err != nil {
+			return err
+		}
 		s = s[j+2:]
 	}
 	w.Write([]byte(s))
 	return nil
+}
+
+func (C *Cache) Execute(f *Fragment, w io.Writer) error {
+	return C.exec(f, w, func (typ, id string) (*Fragment, error) {
+		return C.Get(typ, id)
+	})
+}
+
+type Layers map[string]*Cache
+
+func (C *Cache) ExecuteLayers(f *Fragment, w io.Writer, layers Layers) error {
+	return C.exec(f, w, func (typ, id string) (*Fragment, error) {
+		gen, ok := generators[typ]
+		if !ok {
+			return nil, fmt.Errorf("Generator for '%s' not found", typ)
+		}
+		layer := C
+		if gen.Layer != "" {
+			if layer, ok = layers[gen.Layer]; !ok {
+				return nil, fmt.Errorf("Layer '%s' not found", gen.Layer)
+			}
+		}
+		return layer.Get(typ, id)
+	})
+}
+
+func (C *Cache) Render(f *Fragment) (string, error) {
+	var b bytes.Buffer
+	if err := C.Execute(f, &b); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+func (C *Cache) RenderLayers(f *Fragment, lyrs Layers) (string, error) {
+	var b bytes.Buffer
+	err := C.ExecuteLayers(f, &b, lyrs); 
+	if err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }
 
 func PreRender(text string, v Values) (*Fragment, error) {

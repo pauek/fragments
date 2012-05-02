@@ -100,3 +100,52 @@ func TestExecute2(t *testing.T) {
 		t.Errorf("Wrong output")
 	}
 }
+
+func TestLayers(t *testing.T) {
+	Add("a", Generator{
+		Layer: "A",
+		Func: func(id string, data interface{}) (*Fragment, []string, error) {
+			f := Fragment(fmt.Sprintf(`[%s] Data is %v`, id, data))
+			return &f, nil, nil
+		},
+	})
+	Add("b", Generator{
+		Func: func(id string, data interface{}) (*Fragment, []string, error) {
+			f := Fragment(`[` + id + `] Fragment A is: '{{a:blah}}'`)
+			return &f, nil, nil
+		},
+	})
+	f := Fragment(`{{b:hey}}`)
+	C := NewCache(nil)
+	e1 := NewCache(1)
+	e2 := NewCache(2)
+
+	_, err0 := C.RenderLayers(&f, nil)
+	if err0 == nil {
+		t.Errorf("There should be an error")
+	}
+	// TODO: check error is "layer 'A' not found"
+
+	s1, err1 := C.RenderLayers(&f, Layers{"A": e1})
+	if err1 != nil {
+		t.Errorf("Unexpected error: %s\n", err1)
+	}
+	if s1 != "[hey] Fragment A is: '[blah] Data is 1'" {
+		fmt.Printf("output: %s\n", s1)
+		t.Errorf("Wrong output")
+	}
+
+	s2, err2 := C.RenderLayers(&f, Layers{"A": e2})
+	if err2 != nil {
+		t.Errorf("Unexpected error: %s\n", err2)
+	}
+	if s2 != "[hey] Fragment A is: '[blah] Data is 2'" {
+		fmt.Printf("output: %s\n", s2)
+		t.Errorf("Wrong output")
+	}
+	
+	// check number of fragments each
+	if len(C.cache) != 1 || len(e1.cache) != 1 || len(e2.cache) != 1 {
+		t.Errorf("Wrong number of fragments")
+	}
+}
