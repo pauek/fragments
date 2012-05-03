@@ -84,6 +84,16 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 
 type getFn func(typ, id string) (*Fragment, error)
 
+func SplitID(fid string) (typ, id string) {
+	k := strings.Index(fid, ":")
+	if k == -1 {
+		typ, id = fid, ""
+	} else {
+		typ, id = fid[:k], fid[k+1:]
+	}
+	return
+}
+
 func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
 	s := string(*f)
 	for {
@@ -96,14 +106,7 @@ func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
 		if j == -1 {
 			return fmt.Errorf("Execute: unmatched '{{'")
 		}
-		id := s[i+2 : j]
-		k := strings.Index(id, ":")
-		var typ string
-		if k == -1 {
-			typ, id = id, ""
-		} else {
-			typ, id = id[:k], id[k+1:]
-		}
+		typ, id := SplitID(s[i+2 : j])
 		f, err := fn(typ, id)
 		if err != nil {
 			return fmt.Errorf("Execute: Cannot Get '%s:%s': %s", typ, id, err)
