@@ -143,18 +143,18 @@ func (C *Cache) get(typ, id string) (*CacheItem, error) {
 	return item, nil
 }
 
-type getFn func(typ, id string) (*Fragment, error)
+type getFn func(typ, id string) (*CacheItem, error)
 
 func get(C *Cache) getFn {
-	return func(typ, id string) (*Fragment, error) {
-		return C.Get(typ, id)
+	return func(typ, id string) (*CacheItem, error) {
+		return C.get(typ, id)
 	}
 }
 
 type Layers map[string]*Cache
 
 func getLayers(C *Cache, layers Layers) getFn {
-	return func(typ, id string) (*Fragment, error) {
+	return func(typ, id string) (*CacheItem, error) {
 		gen, ok := generators[typ]
 		if !ok {
 			return nil, fmt.Errorf("Generator for '%s' not found", typ)
@@ -165,11 +165,7 @@ func getLayers(C *Cache, layers Layers) getFn {
 				return nil, fmt.Errorf("Layer '%s' not found", gen.Layer)
 			}
 		}
-		item, err := layer.get(typ, id)
-		if err != nil {
-			return nil, err
-		}
-		return item.frag, nil
+		return layer.get(typ, id)
 	}
 }
 
@@ -189,12 +185,12 @@ func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
 			fmt.Fprint(w, text)
 		},
 		Child: func(typ, id string) error {
-			f, err := fn(typ, id)
+			item, err := fn(typ, id)
 			if err != nil {
 				return fmt.Errorf("exec: Cannot Get '%s:%s': %s", typ, id, err)
 			}
 			fmt.Fprintf(w, `<div fragment="%s:%s">`, typ, id)
-			if err := C.exec(f, w, fn); err != nil {
+			if err := C.exec(item.frag, w, fn); err != nil {
 				return err
 			}
 			fmt.Fprintf(w, `</div>`)
@@ -204,22 +200,27 @@ func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
 }
 
 type DiffItem struct {
-	Id, Html string
+	Id    string
+	Html  string `json:",omitempty"`
 	Stamp time.Time
 }
 
-func (C *Cache) getlist(f *Fragment, fn getFn) (list []*DiffItem, err error) {
+func (C *Cache) getlist(f *Fragment, fn getFn, since *time.Time) (list []*DiffItem, err error) {
 	f.Traverse(Traverser{
 		Child: func(typ, id string) error {
-			f, err := fn(typ, id)
+			item, err := fn(typ, id)
 			if err != nil {
 				return fmt.Errorf("getlist: Cannot Get '%s:%s': %s", typ, id, err)
 			}
-			list = append(list, &DiffItem{
-				Id:   typ + ":" + id,
-				Html: f.Clean().Stubs(),
-			})
-			L, err := C.getlist(f, fn)
+			diffitem := &DiffItem{
+				Id:    typ + ":" + id,
+				Stamp: item.timestamp,
+			}
+			if since == nil || since.Before(item.timestamp) {
+				diffitem.Html = item.frag.Clean().Stubs()
+			}
+			list = append(list, diffitem)
+			L, err := C.getlist(item.frag, fn, since)
 			if err != nil {
 				return err
 			}
@@ -247,11 +248,11 @@ func (C *Cache) ExecuteLayers(f *Fragment, w io.Writer, layers Layers) error {
 }
 
 func (C *Cache) GetList(f *Fragment) (list []*DiffItem, err error) {
-	return C.getlist(f, get(C))
+	return C.getlist(f, get(C), nil)
 }
 
-func (C *Cache) GetListLayers(f *Fragment, layers Layers) (list []*DiffItem, err error) {
-	return C.getlist(f, getLayers(C, layers))
+func (C *Cache) GetListLayers(f *Fragment, layers Layers, since *time.Time) (list []*DiffItem, err error) {
+	return C.getlist(f, getLayers(C, layers), since)
 }
 
 func (C *Cache) Render(f *Fragment) (string, error) {
