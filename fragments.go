@@ -45,12 +45,6 @@ func (F *Fragment) Traverse(T Traverser) error {
 	return nil
 }
 
-func (F *Fragment) Clean() *Fragment {
-	r := strings.NewReplacer("\n", "", "  ", " ", "   ", " ", "\t", " ")
-	*F = Fragment(r.Replace(string(*F)))
-	return F
-}
-
 func (F *Fragment) Stubs() string {
 	var b bytes.Buffer
 	F.Traverse(Traverser{
@@ -217,7 +211,7 @@ func (C *Cache) getlist(f *Fragment, fn getFn, since *time.Time) (list []*DiffIt
 				Stamp: item.timestamp,
 			}
 			if since == nil || since.Before(item.timestamp) {
-				diffitem.Html = item.frag.Clean().Stubs()
+				diffitem.Html = item.frag.Stubs()
 			}
 			list = append(list, diffitem)
 			L, err := C.getlist(item.frag, fn, since)
