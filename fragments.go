@@ -12,6 +12,59 @@ import (
 type Fragment string
 type Values map[string]interface{}
 
+type Traverser struct {
+	Text  func(text string)
+	Child func(typ, id string) error
+}
+
+func (F *Fragment) Traverse(T Traverser) error {
+	s := string(*F)
+	for {
+		i := strings.Index(s, "{{")
+		if i == -1 {
+			break
+		}
+		if T.Text != nil {
+			T.Text(s[:i])
+		}
+		j := strings.Index(s, "}}")
+		if j == -1 {
+			return fmt.Errorf("Traverse: unmatched '{{'")
+		}
+		typ, id := SplitID(s[i+2 : j])
+		if T.Child != nil {
+			if err := T.Child(typ, id); err != nil {
+				return fmt.Errorf("Traverse: %s", err)
+			}
+		}
+		s = s[j+2:]
+	}
+	if T.Text != nil {
+		T.Text(s)
+	}
+	return nil
+}
+
+func (F *Fragment) Clean() *Fragment {
+	r := strings.NewReplacer("\n", "", "  ", " ", "   ", " ", "\t", " ")
+	*F = Fragment(r.Replace(string(*F)))
+	return F
+}
+
+func (F *Fragment) Stubs() string {
+	var b bytes.Buffer
+	F.Traverse(Traverser{
+		Text: func(text string) {
+			fmt.Fprintf(&b, text)
+		},
+		Child: func(typ, id string) error {
+			fmt.Fprintf(&b, `<div fragment="%s:%s"></div>`, typ, id)
+			return nil
+		},
+	})
+	return b.String()
+}
+
 // Registry
 
 type GenFunc func(id string, data interface{}) (*Fragment, []string, error)
@@ -48,7 +101,7 @@ func NewCache(data interface{}) *Cache {
 	}
 }
 
-func (C *Cache) Each(fn func (id string, f *Fragment)) {
+func (C *Cache) Each(fn func(id string, f *Fragment)) {
 	for id, item := range C.cache {
 		fn(id, item.frag)
 	}
@@ -72,7 +125,7 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 			frag:      frag,
 			valid:     true,
 			timestamp: time.Now(),
-			depends: deps,
+			depends:   deps,
 		}
 		for _, oid := range deps {
 			depends(item, oid)
@@ -83,6 +136,30 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 }
 
 type getFn func(typ, id string) (*Fragment, error)
+
+func get(C *Cache) getFn {
+	return func(typ, id string) (*Fragment, error) {
+		return C.Get(typ, id)
+	}
+}
+
+type Layers map[string]*Cache
+
+func getLayers(C *Cache, layers Layers) getFn {
+	return func(typ, id string) (*Fragment, error) {
+		gen, ok := generators[typ]
+		if !ok {
+			return nil, fmt.Errorf("Generator for '%s' not found", typ)
+		}
+		layer := C
+		if gen.Layer != "" {
+			if layer, ok = layers[gen.Layer]; !ok {
+				return nil, fmt.Errorf("Layer '%s' not found", gen.Layer)
+			}
+		}
+		return layer.Get(typ, id)
+	}
+}
 
 func SplitID(fid string) (typ, id string) {
 	k := strings.Index(fid, ":")
@@ -95,35 +172,53 @@ func SplitID(fid string) (typ, id string) {
 }
 
 func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
-	s := string(*f)
-	for {
-		i := strings.Index(s, "{{")
-		if i == -1 {
-			break
-		}
-		w.Write([]byte(s[:i]))
-		j := strings.Index(s, "}}")
-		if j == -1 {
-			return fmt.Errorf("Execute: unmatched '{{'")
-		}
-		typ, id := SplitID(s[i+2 : j])
-		f, err := fn(typ, id)
-		if err != nil {
-			return fmt.Errorf("Execute: Cannot Get '%s:%s': %s", typ, id, err)
-		}
-		if err := C.exec(f, w, fn); err != nil {
-			return err
-		}
-		s = s[j+2:]
-	}
-	w.Write([]byte(s))
-	return nil
+	return f.Traverse(Traverser{
+		Text: func(text string) {
+			fmt.Fprint(w, text)
+		},
+		Child: func(typ, id string) error {
+			f, err := fn(typ, id)
+			if err != nil {
+				return fmt.Errorf("exec: Cannot Get '%s:%s': %s", typ, id, err)
+			}
+			fmt.Fprintf(w, `<div fragment="%s:%s">`, typ, id)
+			if err := C.exec(f, w, fn); err != nil {
+				return err
+			}
+			fmt.Fprintf(w, `</div>`)
+			return nil
+		},
+	})
+}
+
+type DiffItem struct {
+	Id, Html string
+}
+
+func (C *Cache) getlist(f *Fragment, fn getFn) (list []*DiffItem, err error) {
+	f.Traverse(Traverser{
+		Child: func(typ, id string) error {
+			f, err := fn(typ, id)
+			if err != nil {
+				return fmt.Errorf("getlist: Cannot Get '%s:%s': %s", typ, id, err)
+			}
+			list = append(list, &DiffItem{
+				Id:   typ + ":" + id,
+				Html: f.Clean().Stubs(),
+			})
+			L, err := C.getlist(f, fn)
+			if err != nil {
+				return err
+			}
+			list = append(list, L...)
+			return nil
+		},
+	})
+	return
 }
 
 func (C *Cache) Execute(w io.Writer, f *Fragment) error {
-	return C.exec(f, w, func (typ, id string) (*Fragment, error) {
-		return C.Get(typ, id)
-	})
+	return C.exec(f, w, get(C))
 }
 
 func (C *Cache) ExecuteTemplate(w io.Writer, tmpl *template.Template, v Values) error {
@@ -134,23 +229,16 @@ func (C *Cache) ExecuteTemplate(w io.Writer, tmpl *template.Template, v Values) 
 	return C.Execute(w, frag)
 }
 
-
-type Layers map[string]*Cache
-
 func (C *Cache) ExecuteLayers(f *Fragment, w io.Writer, layers Layers) error {
-	return C.exec(f, w, func (typ, id string) (*Fragment, error) {
-		gen, ok := generators[typ]
-		if !ok {
-			return nil, fmt.Errorf("Generator for '%s' not found", typ)
-		}
-		layer := C
-		if gen.Layer != "" {
-			if layer, ok = layers[gen.Layer]; !ok {
-				return nil, fmt.Errorf("Layer '%s' not found", gen.Layer)
-			}
-		}
-		return layer.Get(typ, id)
-	})
+	return C.exec(f, w, getLayers(C, layers))
+}
+
+func (C *Cache) GetList(f *Fragment) (list []*DiffItem, err error) {
+	return C.getlist(f, get(C))
+}
+
+func (C *Cache) GetListLayers(f *Fragment, layers Layers) (list []*DiffItem, err error) {
+	return C.getlist(f, getLayers(C, layers))
 }
 
 func (C *Cache) Render(f *Fragment) (string, error) {
@@ -163,7 +251,7 @@ func (C *Cache) Render(f *Fragment) (string, error) {
 
 func (C *Cache) RenderLayers(f *Fragment, lyrs Layers) (string, error) {
 	var b bytes.Buffer
-	err := C.ExecuteLayers(f, &b, lyrs); 
+	err := C.ExecuteLayers(f, &b, lyrs)
 	if err != nil {
 		return "", err
 	}
@@ -210,7 +298,7 @@ func depends(item *CacheItem, id string) {
 func Invalidate(id string) {
 	if itemlist, ok := deps[id]; ok {
 		for _, item := range itemlist {
-			item.valid = false;
+			item.valid = false
 		}
 	}
 }
@@ -223,7 +311,7 @@ func Invalidate(id string) {
  - Remove framents (by date?)
 
  - If a Cache is GCd, its items might be referenced in 'deps', 
-   so there is a memory leak here.
+   so there is a "memory leak" here.
 
  - Set a limit in bytes for the cache (?)
 
