@@ -108,6 +108,14 @@ func (C *Cache) Each(fn func(id string, f *Fragment)) {
 }
 
 func (C *Cache) Get(typ, id string) (*Fragment, error) {
+	item, err := C.get(typ, id)
+	if err != nil {
+		return nil, err
+	}
+	return item.frag, nil
+}
+
+func (C *Cache) get(typ, id string) (*CacheItem, error) {
 	fid := typ + ":" + id
 	item, ok := C.cache[fid]
 	if !ok || !item.valid {
@@ -132,7 +140,7 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 		}
 		C.cache[fid] = item
 	}
-	return item.frag, nil
+	return item, nil
 }
 
 type getFn func(typ, id string) (*Fragment, error)
@@ -157,7 +165,11 @@ func getLayers(C *Cache, layers Layers) getFn {
 				return nil, fmt.Errorf("Layer '%s' not found", gen.Layer)
 			}
 		}
-		return layer.Get(typ, id)
+		item, err := layer.get(typ, id)
+		if err != nil {
+			return nil, err
+		}
+		return item.frag, nil
 	}
 }
 
@@ -193,6 +205,7 @@ func (C *Cache) exec(f *Fragment, w io.Writer, fn getFn) error {
 
 type DiffItem struct {
 	Id, Html string
+	Stamp time.Time
 }
 
 func (C *Cache) getlist(f *Fragment, fn getFn) (list []*DiffItem, err error) {
