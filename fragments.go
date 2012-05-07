@@ -64,8 +64,9 @@ func (F *Fragment) Stubs() string {
 type GenFunc func(id string, data interface{}) (*Fragment, []string, error)
 
 type Generator struct {
-	Func  GenFunc
-	Layer string
+	Func     GenFunc
+	Layer    string
+	Realtime bool // always invalid
 }
 
 var generators = make(map[string]Generator)
@@ -110,14 +111,13 @@ func (C *Cache) Get(typ, id string) (*Fragment, error) {
 }
 
 func (C *Cache) get(typ, id string) (*CacheItem, error) {
+	gen, okgen := generators[typ]
+	if !okgen {
+		return nil, fmt.Errorf("Type '%s' not found", typ)
+	}
 	fid := typ + ":" + id
-	item, ok := C.cache[fid]
-	if !ok || !item.valid {
-		gen, ok2 := generators[typ]
-		if !ok2 {
-			return nil, fmt.Errorf("Type '%s' not found", typ)
-		}
-		// TODO: handle deps
+	item, okitem := C.cache[fid]
+	if !okitem || !item.valid || gen.Realtime {
 		frag, deps, err := gen.Func(id, C.data)
 		if err != nil {
 			msg := "Generation error for '%s:%s': %s\n"
