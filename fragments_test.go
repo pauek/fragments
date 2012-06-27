@@ -1,11 +1,58 @@
 package fragments
 
 import (
-	"bytes"
-	"fmt"
 	"testing"
 )
 
+var splitcases = []struct{
+	fullid, typ, id string
+}{
+	{"a:b", "a", "b"},
+	{"a:b:c", "a", "b:c"},
+	{"a", "a", ""},
+	{"", "", ""},
+}
+
+func TestSplitID(t *testing.T) {
+	for _, cas := range splitcases {
+		typ, id := SplitID(cas.fullid)
+		if typ != cas.typ {
+			t.Errorf(`"%s" != "%s"`, typ, cas.typ)
+		}
+		if id != cas.id {
+			t.Errorf(`"%s" != "%s"`, id, cas.id)
+		}
+	}
+}
+
+func TestTraverse(t *testing.T) {
+	f1 := Fragment("a{{b:xx}}c{{d:yy}}e")
+	expText := []string{"a", "c", "e"}
+	expChild := []string{"b:xx", "d:yy"}
+	f1.traverse(traverser{
+	   Text: func (text string) {
+			if text != expText[0] {
+				t.Errorf(`"%s" != "%s"`, text, expText[0])
+			}
+			expText = expText[1:]
+		},
+	   Child: func (typ, id string) error {
+			_typ, _id := SplitID(expChild[0])
+			if typ != _typ {
+				t.Errorf(`"%s" != "%s"`, typ, _typ)
+			}
+			if id != _id {
+				t.Errorf(`"%s" != "%s"`, id, _id)
+			}
+			expChild = expChild[1:]
+			return nil
+		},
+	})
+}
+
+
+
+/*
 func TestPreRender(t *testing.T) {
 	tmpl, err := Parse(`Hola {{.user}}, que tal {{fragment .typ .id}}`)
 	if err != nil {
@@ -190,3 +237,4 @@ func TestInvalidation(t *testing.T) {
 	Invalidate("a")
 	test("a = 2")
 }
+*/
