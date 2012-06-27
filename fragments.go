@@ -19,7 +19,7 @@ Here is an example usage of the package:
    fragments.Get("salute pauek").Render(os.Stdout)
    fragments.Get("pair-salute pauek other").Render(os.Stdout)
 
-*/ 
+*/
 package fragments
 
 import (
@@ -35,32 +35,47 @@ type Renderer interface {
 	Render(w io.Writer)
 }
 
-// Text is the simplest fragment: just some text.
-type Text string
+type renderFn func(w io.Writer)
 
-// Id is a type of fragment: stores ids for fragments.
+func (f renderFn) Render(w io.Writer) { f(w) }
+
+func RenderFunc(fn func(w io.Writer)) Renderer {
+	return renderFn(fn)
+}
+
+// Id stores ids for fragments.
 type Id string
+type Text string
+type Error string
 
-// Render for Text simply writes the text to w.
+func (E Error) Render(w io.Writer) {
+	w.Write([]byte(E))
+}
+
 func (T Text) Render(w io.Writer) {
 	w.Write([]byte(T))
 }
 
-// Render for Ids gets a fragment with corresponding id
-// from the cache and renders it on w.
-func (id Id) Render(w io.Writer) {
-	Get(string(id)).Render(w)
-}
+// Template is a type of fragment: a simple array of strings and Ids.
+type Template []interface{}
 
-// Template is a type of fragment: a simple array of Text and Ids.
-type Template []Renderer
+// Exec executes the template traversing the array and writing pieces
+// of text to w and calling function fn for every Id.
+func (T Template) Exec(w io.Writer, fn func (id string)) {
+	for _, f := range T {
+		switch f.(type) {
+		case string:
+			w.Write([]byte(f.(string)))
+		case Id:
+			fn(string(f.(Id)))
+		}
+	}
+}
 
 // Render for Templates invokes the Render method on all
 // elements of the array
 func (T Template) Render(w io.Writer) {
-	for _, f := range T {
-		f.Render(w)
-	}
+	T.Exec(w, func(id string) { Get(id).Render(w) })
 }
 
 func (T Template) String() (s string) {
@@ -81,17 +96,24 @@ func Parse(s string, ldelim, rdelim string) (tmpl Template, err error) {
 	for {
 		i := strings.Index(s, ldelim)
 		j := strings.Index(s, rdelim)
-		switch {
-		case i == -1 && j == -1:
+		if i == -1 && j == -1 {
 			break
-		case i * j < 0:
+		} else if i == -1 || i > j {
 			return nil, ParseError
 		}
-		tmpl = append(tmpl, Text(s[:i]))
-		tmpl = append(tmpl, Id(s[i+lsz:j]))
+		text := s[:i]
+		if text != "" {
+			tmpl = append(tmpl, text)
+		}
+		id := Id(s[i+lsz : j])
+		if id != "" {
+			tmpl = append(tmpl, id)
+		}
 		s = s[j+rsz:]
 	}
-	tmpl = append(tmpl, Text(s))
+	if len(s) > 0 {
+		tmpl = append(tmpl, s)
+	}
 	return tmpl, nil
 }
 
@@ -107,7 +129,7 @@ var cache = make(map[string]cacheitem)
 // Get a fragment with identifier id, as well as the time of
 // generation. If the fragment doesn't exist in the cache, it is
 // created with its generator
-func GetStamp(id string) (r Renderer, t time.Time) {
+func GetT(id string) (r Renderer, t time.Time) {
 	f, ok := cache[id]
 	if ok {
 		return f.r, f.t
@@ -117,12 +139,18 @@ func GetStamp(id string) (r Renderer, t time.Time) {
 	return
 }
 
+// Get is the same as GetT but does no return the time
 func Get(id string) Renderer {
-	f, _ := GetStamp(id)
+	f, _ := GetT(id)
 	return f
 }
 
-func ShowCache() {
+// Render a fragment with id to writer w
+func Render(w io.Writer, id string) {
+	Get(id).Render(w)
+}
+
+func showCache() {
 	for id, item := range cache {
 		fmt.Printf("%s: %+v\n", id, item)
 	}
@@ -140,7 +168,7 @@ func generate(id string) (f Renderer, t time.Time) {
 	args := strings.Split(string(id), " ")
 	gen, ok := registry[args[0]]
 	if !ok {
-		return Text(fmt.Sprintf("no generator '%s'", args[0])), time.Now()
+		return Error(fmt.Sprintf("no generator '%s'", args[0])), time.Now()
 	}
 	return gen(args[1:]), time.Now()
 }

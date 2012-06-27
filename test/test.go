@@ -1,20 +1,50 @@
 package main
 
 import (
-	"fmt"
 	frag "fragments"
-	"os"
+	"net/http"
+	"io"
 )
 
+const tLayout = `
+<!doctype html>
+<html>
+  <head></head>
+  <body>{{body}}</body>
+</html>
+`
+
+const tHome = `
+<h1>Home</h1>
+<p>This is the home page</p>
+`
+
+var layout frag.Template
+
+func init() {
+	layout, _ = frag.Parse(tLayout, "{{", "}}")
+}
+
+type Page string
+
+
+func fHome(args []string) frag.Renderer {
+	return frag.Text(tHome)
+}
+
+func fPage(args []string) frag.Renderer {
+	return frag.RenderFunc(func (w io.Writer) {
+		layout.Exec(w, func(id string) {
+			frag.Render(w, args[0])
+		})
+	})
+}
+
 func main() {
-	frag.Register("salute", func(args []string) frag.Renderer {
-		return frag.Text("hello, " + args[0] + "\n")
+	frag.Register("page", fPage)
+	frag.Register("home", fHome)
+	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
+		frag.Render(w, "page " + req.URL.Path[1:])
 	})
-	frag.Register("pair-salute", func(a []string) frag.Renderer {
-		s := fmt.Sprintf("salute 1: {salute %s}salute 2: {salute %s}", a[0], a[1])
-		f, _ := frag.Parse(s, "{", "}")
-		return f
-	})
-	frag.Get("salute pauek").Render(os.Stdout)
-	frag.Get("pair-salute pauek other").Render(os.Stdout)
+	http.ListenAndServe(":8080", nil)
 }
