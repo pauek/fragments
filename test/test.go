@@ -2,8 +2,8 @@ package main
 
 import (
 	frag "fragments"
-	"net/http"
 	"io"
+	"net/http"
 )
 
 const tLayout = `
@@ -20,31 +20,37 @@ const tHome = `
 `
 
 var layout frag.Template
+var cache *frag.Cache
 
 func init() {
 	layout, _ = frag.Parse(tLayout, "{{", "}}")
+	cache = frag.NewCache()
 }
 
 type Page string
 
 
-func fHome(args []string) frag.Renderer {
+func fHome(C *frag.Cache, args []string) frag.Fragment {
 	return frag.Text(tHome)
 }
 
-func fPage(args []string) frag.Renderer {
-	return frag.RenderFunc(func (w io.Writer) {
-		layout.Exec(w, func(id string) {
-			frag.Render(w, args[0])
+func fPage(C *frag.Cache, args []string) frag.Fragment {
+	return frag.RenderFunc(func (w io.Writer, C *frag.Cache, m frag.Mode) {
+		layout.Each(func (f frag.Fragment) {
+			if _, ok := f.(frag.Ref); ok {
+				C.Render(w, args[1]) // assume 'body'
+				return
+			}
+			f.Render(w, C, m)
 		})
 	})
 }
 
 func main() {
-	frag.Register("page", fPage)
-	frag.Register("home", fHome)
+	cache.Register("page", fPage)
+	cache.Register("home", fHome)
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		frag.Render(w, "page " + req.URL.Path[1:])
+		cache.Render(w, "page "+req.URL.Path[1:])
 	})
 	http.ListenAndServe(":8080", nil)
 }

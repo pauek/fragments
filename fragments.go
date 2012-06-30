@@ -7,11 +7,11 @@ Text, Ids and Templates.
 
 Here is an example usage of the package:
 
-   fragments.Register("salute", func(args []string) fragments.Renderer {
-      return fragments.Text("hello, " + args[0] + "\n")
+   fragments.Register("salute", func(C *Cache, args []string) fragments.Renderer {
+      return fragments.Text("hello, " + args[1] + "\n")
    })
-   fragments.Register("pair-salute", func(a []string) fragments.Renderer {
-      s := fmt.Sprintf("salute 1: {salute %s}salute 2: {salute %s}", a[0], a[1])
+   fragments.Register("pair-salute", func(C *Cache, a []string) fragments.Renderer {
+      s := fmt.Sprintf("salute 1: {salute %s}salute 2: {salute %s}", a[1], a[2])
       f, _ := fragments.Parse(s, "{", "}")
       return f
    })
@@ -23,6 +23,7 @@ Here is an example usage of the package:
 package fragments
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -30,62 +31,58 @@ import (
 	"time"
 )
 
-// Renderer 
-type Renderer interface {
-	Render(w io.Writer)
+type Mode int
+
+const (
+	Recursive = Mode(0)
+	NonRecursive = Mode(1)
+)
+
+type Fragment interface {
+	Render(w io.Writer, C *Cache, mode Mode)
+	EachChild(fn func(id string))
 }
 
-type renderFn func(w io.Writer)
+// Text
 
-func (f renderFn) Render(w io.Writer) { f(w) }
-
-func RenderFunc(fn func(w io.Writer)) Renderer {
-	return renderFn(fn)
-}
-
-// Id stores ids for fragments.
-type Id string
 type Text string
-type Error string
 
-func (E Error) Render(w io.Writer) {
-	w.Write([]byte(E))
+func (t Text) Render(w io.Writer, C *Cache, mode Mode) {
+	w.Write([]byte(t))
 }
 
-func (T Text) Render(w io.Writer) {
-	w.Write([]byte(T))
+func (t Text) EachChild(fn func(id string)) {}
+
+// Ref
+
+type Ref string
+
+func (r Ref) id() string { return string(r) }
+
+func (r Ref) Render(w io.Writer, C *Cache, mode Mode) {
+	C.get(string(r)).frag.Render(w, C, mode)
 }
 
-// Template is a type of fragment: a simple array of strings and Ids.
-type Template []interface{}
+func (r Ref) EachChild(fn func(id string)) { fn(string(r)) }
 
-// Exec executes the template traversing the array and writing pieces
-// of text to w and calling function fn for every Id.
-func (T Template) Exec(w io.Writer, fn func (id string)) {
-	for _, f := range T {
-		switch f.(type) {
-		case string:
-			w.Write([]byte(f.(string)))
-		case Id:
-			fn(string(f.(Id)))
-		}
+// Template
+
+type Template []Fragment
+
+func (t Template) Each(fn func (f Fragment)) {
+	for _, elem := range t {
+		fn(elem)
 	}
 }
 
-// Render for Templates invokes the Render method on all
-// elements of the array
-func (T Template) Render(w io.Writer) {
-	T.Exec(w, func(id string) { Get(id).Render(w) })
+func (t Template) Render(w io.Writer, C *Cache, mode Mode) {
+	t.Each(func(f Fragment) { f.Render(w, C, mode) })
 }
 
-func (T Template) String() (s string) {
-	for _, f := range T {
-		s += fmt.Sprintf("%v", f)
-	}
-	return s
+func (t Template) EachChild(fn func(id string)) {
+	t.Each(func(f Fragment) { f.EachChild(fn) })
 }
 
-// Returned as a Parse error
 var ParseError = errors.New("Parse: unmatched delimiters")
 
 // Parse some text looking for pieces enclosed within ldelim and
@@ -101,82 +98,139 @@ func Parse(s string, ldelim, rdelim string) (tmpl Template, err error) {
 		} else if i == -1 || i > j {
 			return nil, ParseError
 		}
-		text := s[:i]
+		text := Text(s[:i])
 		if text != "" {
 			tmpl = append(tmpl, text)
 		}
-		id := Id(s[i+lsz : j])
+		id := Ref(s[i+lsz : j])
 		if id != "" {
 			tmpl = append(tmpl, id)
 		}
 		s = s[j+rsz:]
 	}
 	if len(s) > 0 {
-		tmpl = append(tmpl, s)
+		tmpl = append(tmpl, Text(s))
 	}
 	return tmpl, nil
 }
 
 // Cache
 
-type cacheitem struct {
-	r Renderer
-	t time.Time
+type Cache struct {
+	cache    map[string]cacheItem
+	registry map[string]Generator
+	deps     map[string][]string
 }
 
-var cache = make(map[string]cacheitem)
+type Generator func(C *Cache, args []string) Fragment
 
-// Get a fragment with identifier id, as well as the time of
-// generation. If the fragment doesn't exist in the cache, it is
-// created with its generator
-func GetT(id string) (r Renderer, t time.Time) {
-	f, ok := cache[id]
-	if ok {
-		return f.r, f.t
+type cacheItem struct {
+	frag  Fragment
+	stamp time.Time
+	valid bool
+}
+
+type ListItem struct{ id, text string }
+
+func NewCache() (C *Cache) {
+	C = new(Cache)
+	C.cache = make(map[string]cacheItem)
+	C.registry = make(map[string]Generator)
+	C.deps = make(map[string][]string)
+	return C
+}
+
+func (C *Cache) get(id string) cacheItem {
+	item, ok := C.cache[id]
+	if !ok || !item.valid {
+		item = C.generate(id)
+		C.cache[id] = item
 	}
-	r, t = generate(id)
-	cache[id] = cacheitem{r, t}
+	return item
+}
+
+func (C *Cache) generate(id string) (item cacheItem) {
+	args := strings.Split(id, " ")
+	gen, ok := C.registry[args[0]]
+	item.stamp = time.Now()
+	item.valid = true
+	if !ok {
+		item.frag = Text(fmt.Sprintf("No generator '%s'", args[0]))
+		return
+	}
+	item.frag = gen(C, args)
 	return
 }
 
-// Get is the same as GetT but does no return the time
-func Get(id string) Renderer {
-	f, _ := GetT(id)
-	return f
+func (C *Cache) Register(id string, gen Generator) {
+	C.registry[id] = gen
 }
 
-// Render a fragment with id to writer w
+func (C *Cache) Render(w io.Writer, id string) {
+	C.get(id).frag.Render(w, C, Recursive)
+}
+
+func (C *Cache) List(id string) (list []ListItem) {
+	var zero time.Time
+	return C.DiffList(id, zero)
+}
+
+func (C *Cache) DiffList(id string, since time.Time) (list []ListItem) {
+	item := C.get(id)
+	list = []ListItem{{id: id}}
+	if item.stamp.After(since) {
+		var b bytes.Buffer
+		item.frag.Render(&b, C, NonRecursive)
+		list[0].text = b.String()
+	} 
+	item.frag.EachChild(func (id string) {
+		sublist := C.DiffList(id, since)
+		list = append(list, sublist...)
+	})
+	return list
+}
+
+func (C *Cache) Depends(id string, ids ...string) {
+	C.deps[id] = append(C.deps[id], ids...)
+}
+
+func (C *Cache) show() {
+	for id, item := range C.cache {
+		fmt.Printf("%#v %#v\n", id, item)
+	}
+}
+
+// fragments for closures
+
+type FragFn func(w io.Writer, C *Cache, mode Mode)
+
+func (f FragFn) Render(w io.Writer, C *Cache, m Mode) { f(w, C, m) }
+func (f FragFn) EachChild(fn func(id string))         {}
+
+func RenderFunc(fn func(w io.Writer, C *Cache, m Mode)) Fragment {
+	return FragFn(fn)
+}
+
+// defaultCache
+
+var defaultCache *Cache
+
+func init() {
+	defaultCache = NewCache()
+}
+
+func Register(id string, gen Generator) {
+	defaultCache.Register(id, gen)
+}
+
 func Render(w io.Writer, id string) {
-	Get(id).Render(w)
+	defaultCache.Render(w, id)
 }
 
-func showCache() {
-	for id, item := range cache {
-		fmt.Printf("%s: %+v\n", id, item)
-	}
+func List(id string) []ListItem {
+	return defaultCache.List(id)
 }
 
-// Registry
-
-// Generator is the type of function that generates new fragments when
-// they are requested
-type Generator func(args []string) Renderer
-
-var registry = make(map[string]Generator)
-
-func generate(id string) (f Renderer, t time.Time) {
-	args := strings.Split(string(id), " ")
-	gen, ok := registry[args[0]]
-	if !ok {
-		return Error(fmt.Sprintf("no generator '%s'", args[0])), time.Now()
-	}
-	return gen(args[1:]), time.Now()
+func DiffList(id string, since time.Time) []ListItem {
+	return defaultCache.DiffList(id, since)
 }
-
-// Register a fragment type. typ is the type name of the fragment, and
-// fn is a generator function.
-func Register(typ string, fn Generator) {
-	registry[typ] = fn
-}
-
-// Invalidation

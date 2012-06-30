@@ -2,6 +2,7 @@ package fragments
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
@@ -68,21 +69,56 @@ func TestParse3(t *testing.T) {
 
 var templateRender = []string{
 	"xxx{y}xxx", "xxxyyxxx",
-	"a{b b}c", "ab bb bc",
+	"a{b b}c", "a[b b][b b]c",
 }
 
 func TestRender(t *testing.T) {
+	c := NewCache()
+	c.Register("y", func(C *Cache, args []string) Fragment {
+		return Text("yy")
+	})
+	c.Register("b", func(C *Cache, args []string) Fragment {
+		return Text(fmt.Sprintf("%v%v", args, args))
+	})
 	for i := 0; i < len(templateRender); i += 2 {
 		source := templateRender[i]
 		target := templateRender[i+1]
 		tmpl, _ := Parse(source, "{", "}")
 		var b bytes.Buffer
-		tmpl.Exec(&b, func (id string) {
-			b.Write([]byte(id))
-			b.Write([]byte(id))
-		})
+		tmpl.Render(&b, c, Recursive)
 		if b.String() != target {
 			t.Errorf("'%s' != '%s'", b.String(), target)
+		}
+	}
+}
+
+var templateCache = []string{
+	"mult 1",     "1",
+	"mult 6 7",   "6 * 7",
+	"mult 5 6 7", "5 * 6 * 7",
+}
+
+func TestCache(t *testing.T) {
+	C := NewCache()
+	C.Register("mult", func(C *Cache, args []string) Fragment {
+		s := fmt.Sprintf("%s", args[1])
+		if len(args) > 2 {
+			s += " * {mult"
+			for _, a := range args[2:] {
+				s += fmt.Sprintf(" %s", a)
+			}
+			s += "}"
+			tmpl, _ := Parse(s, "{", "}")
+			return tmpl
+		}
+		return Text(s)
+	})
+	for i := 0; i < len(templateCache); i += 2 {
+		src, tgt := templateCache[i], templateCache[i+1]
+		var b bytes.Buffer
+		C.Render(&b, src)
+		if b.String() != tgt {
+			t.Errorf("'%s' != '%s'", b.String(), tgt)
 		}
 	}
 }
