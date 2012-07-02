@@ -1,23 +1,23 @@
 /*
 
-Package fragments provides a simple way to cache pieces of (web)
-text. A fragment is just an object which can be rendered (i.e., has
-interface Renderer). The package provides three types of fragment:
-Text, Ids and Templates.
+Package fragments provides a simple way to cache pieces of web text. A
+fragment is an object which can be rendered and can inform about
+children (has interface Fragment). The package provides two types of
+simple fragments: Text and Templates.
 
 Here is an example usage of the package:
 
-   fragments.Register("salute", func(C *Cache, args []string) fragments.Renderer {
+   fragments.Register("salute", func(C *Cache, args []string) fragments.Fragment {
       return fragments.Text("hello, " + args[1] + "\n")
    })
-   fragments.Register("pair-salute", func(C *Cache, a []string) fragments.Renderer {
+   fragments.Register("pair-salute", func(C *Cache, a []string) fragments.Fragment {
       s := fmt.Sprintf("salute 1: {salute %s}salute 2: {salute %s}", a[1], a[2])
-      f, _ := fragments.Parse(s, "{", "}")
+      f, _ := fragments.Parser{"{", "}"}.Parse(s)
       return f
    })
    ...
-   fragments.Get("salute pauek").Render(os.Stdout)
-   fragments.Get("pair-salute pauek other").Render(os.Stdout)
+   fragments.Render(os.Stdout, "salute pauek")
+   fragments.Render(os.Stdout, "pair-salute pauek other")
 
 */
 package fragments
@@ -34,7 +34,7 @@ import (
 type Mode int
 
 const (
-	Recursive = Mode(0)
+	Recursive    = Mode(0)
 	NonRecursive = Mode(1)
 )
 
@@ -53,113 +53,131 @@ func (t Text) Render(w io.Writer, C *Cache, mode Mode) {
 
 func (t Text) EachChild(fn func(id string)) {}
 
-// Ref
-
-type Ref string
-
-func (r Ref) id() string { return string(r) }
-
-func (r Ref) Render(w io.Writer, C *Cache, mode Mode) {
-	C.get(string(r)).frag.Render(w, C, mode)
+type tmplItem struct {
+	text     string
+	isAction bool
 }
-
-func (r Ref) EachChild(fn func(id string)) { fn(string(r)) }
 
 // Template
 
-type Template []Fragment
+type Template []tmplItem
 
-func (t Template) Each(fn func (f Fragment)) {
-	for _, elem := range t {
-		fn(elem)
+type Parser struct {
+	Ldelim, Rdelim string
+}
+
+var ParseError = errors.New("Unmatched delimiters")
+
+func (p Parser) Parse(s string) (Template, error) {
+	t := []tmplItem{}
+	lsz, rsz := len(p.Ldelim), len(p.Rdelim)
+	for {
+		i := strings.Index(s, p.Ldelim)
+		if i == -1 {
+			break
+		}
+		t = append(t, tmplItem{s[:i], false})
+		s = s[i+lsz:]
+		j := strings.Index(s, p.Rdelim)
+		if j == -1 {
+			return nil, ParseError
+		}
+		t = append(t, tmplItem{s[:j], true})
+		s = s[j+rsz:]
+	}
+	if len(s) > 0 {
+		t = append(t, tmplItem{s, false})
+	}
+	return Template(t), nil
+}
+
+func (t Template) Exec(w io.Writer, fn func(action string)) {
+	for _, item := range t {
+		if item.isAction {
+			fn(item.text)
+		} else {
+			w.Write([]byte(item.text))
+		}
 	}
 }
 
 func (t Template) Render(w io.Writer, C *Cache, mode Mode) {
-	t.Each(func(f Fragment) { f.Render(w, C, mode) })
+	t.Exec(w, func(id string) {
+		if mode == Recursive {
+			C.Render(w, id)
+		}
+	})
 }
 
 func (t Template) EachChild(fn func(id string)) {
-	t.Each(func(f Fragment) { f.EachChild(fn) })
+	for _, item := range t {
+		if item.isAction {
+			fn(item.text)
+		}
+	}
 }
 
-var ParseError = errors.New("Parse: unmatched delimiters")
-
-// Parse some text looking for pieces enclosed within ldelim and
-// rdelim and return a Template (or an OpenDelim error)
-func Parse(s string, ldelim, rdelim string) (tmpl Template, err error) {
-	lsz := len(ldelim)
-	rsz := len(rdelim)
-	for {
-		i := strings.Index(s, ldelim)
-		j := strings.Index(s, rdelim)
-		if i == -1 && j == -1 {
-			break
-		} else if i == -1 || i > j {
-			return nil, ParseError
-		}
-		text := Text(s[:i])
-		if text != "" {
-			tmpl = append(tmpl, text)
-		}
-		id := Ref(s[i+lsz : j])
-		if id != "" {
-			tmpl = append(tmpl, id)
-		}
-		s = s[j+rsz:]
-	}
-	if len(s) > 0 {
-		tmpl = append(tmpl, Text(s))
-	}
-	return tmpl, nil
+func (t Template) RenderFn(fn func(_w io.Writer, _id string, _m Mode)) RenderFn {
+	return RenderFn(func(w io.Writer, C *Cache, m Mode) {
+		t.Exec(w, func(id string) { fn(w, id, m) })
+	})
 }
+
+// RenderFn
+
+type RenderFn func(w io.Writer, C *Cache, mode Mode)
+
+func (f RenderFn) Render(w io.Writer, C *Cache, m Mode) { f(w, C, m) }
+func (f RenderFn) EachChild(fn func(id string)) {}
 
 // Cache
 
+type cacheItem struct {
+	frag  Fragment
+	valid bool
+	stamp time.Time
+}
+
 type Cache struct {
-	cache    map[string]cacheItem
+	cache    map[string]*cacheItem
 	registry map[string]Generator
-	deps     map[string][]string
+	depends  map[string]map[string]bool
 }
 
 type Generator func(C *Cache, args []string) Fragment
 
-type cacheItem struct {
-	frag  Fragment
-	stamp time.Time
-	valid bool
-}
-
-type ListItem struct{ id, text string }
-
-func NewCache() (C *Cache) {
-	C = new(Cache)
-	C.cache = make(map[string]cacheItem)
+func NewCache() *Cache {
+	C := new(Cache)
+	C.cache = make(map[string]*cacheItem)
 	C.registry = make(map[string]Generator)
-	C.deps = make(map[string][]string)
+	C.depends = make(map[string]map[string]bool)
 	return C
 }
 
-func (C *Cache) get(id string) cacheItem {
-	item, ok := C.cache[id]
-	if !ok || !item.valid {
-		item = C.generate(id)
-		C.cache[id] = item
+func (C *Cache) get(id string) *cacheItem {
+	f, ok := C.cache[id]
+	if !ok || !f.valid {
+		f = &cacheItem{
+			frag:  C.generate(id),
+			valid: true,
+			stamp: time.Now(),
+		}
+		C.cache[id] = f
 	}
-	return item
+	return f
 }
 
-func (C *Cache) generate(id string) (item cacheItem) {
+func (C *Cache) Get(id string) Fragment {
+	return C.get(id).frag
+}
+
+func (C *Cache) generate(id string) Fragment {
 	args := strings.Split(id, " ")
 	gen, ok := C.registry[args[0]]
-	item.stamp = time.Now()
-	item.valid = true
 	if !ok {
-		item.frag = Text(fmt.Sprintf("No generator '%s'", args[0]))
-		return
+		return Text(fmt.Sprintf(`No generator "%s"`, args[0]))
 	}
-	item.frag = gen(C, args)
-	return
+	return gen(C, args)
 }
 
 func (C *Cache) Register(id string, gen Generator) {
@@ -170,67 +188,85 @@ func (C *Cache) Render(w io.Writer, id string) {
 	C.get(id).frag.Render(w, C, Recursive)
 }
 
-func (C *Cache) List(id string) (list []ListItem) {
-	var zero time.Time
-	return C.DiffList(id, zero)
+type ListItem struct {
+	id, text string
 }
 
-func (C *Cache) DiffList(id string, since time.Time) (list []ListItem) {
-	item := C.get(id)
+func (C *Cache) ListDiff(id string, since time.Time) (list []ListItem) {
 	list = []ListItem{{id: id}}
+	item := C.get(id)
 	if item.stamp.After(since) {
 		var b bytes.Buffer
 		item.frag.Render(&b, C, NonRecursive)
 		list[0].text = b.String()
-	} 
-	item.frag.EachChild(func (id string) {
-		sublist := C.DiffList(id, since)
+	}
+	item.frag.EachChild(func(id string) {
+		sublist := C.List(id)
 		list = append(list, sublist...)
 	})
-	return list
+	return
 }
 
-func (C *Cache) Depends(id string, ids ...string) {
-	C.deps[id] = append(C.deps[id], ids...)
+func (C *Cache) List(id string) []ListItem {
+	var zerotime time.Time
+	return C.ListDiff(id, zerotime)
 }
 
-func (C *Cache) show() {
-	for id, item := range C.cache {
-		fmt.Printf("%#v %#v\n", id, item)
+func (C *Cache) Depends(fid string, oids ...string) {
+	for _, oid := range oids {
+		if C.depends[oid] == nil {
+			C.depends[oid] = make(map[string]bool)
+		}
+		C.depends[oid][fid] = true
 	}
 }
 
-// fragments for closures
-
-type FragFn func(w io.Writer, C *Cache, mode Mode)
-
-func (f FragFn) Render(w io.Writer, C *Cache, m Mode) { f(w, C, m) }
-func (f FragFn) EachChild(fn func(id string))         {}
-
-func RenderFunc(fn func(w io.Writer, C *Cache, m Mode)) Fragment {
-	return FragFn(fn)
+func (C *Cache) Invalidate(oid string) {
+	for fid, _ := range C.depends[oid] {
+		C.get(fid).valid = false
+	}
 }
 
-// defaultCache
+// DefaultCache
 
-var defaultCache *Cache
+var DefaultCache *Cache
 
 func init() {
-	defaultCache = NewCache()
+	DefaultCache = NewCache()
 }
 
-func Register(id string, gen Generator) {
-	defaultCache.Register(id, gen)
+func Get(id string) Fragment {
+	return DefaultCache.Get(id)
 }
 
 func Render(w io.Writer, id string) {
-	defaultCache.Render(w, id)
+	DefaultCache.Render(w, id)
 }
 
 func List(id string) []ListItem {
-	return defaultCache.List(id)
+	return DefaultCache.List(id)
 }
 
-func DiffList(id string, since time.Time) []ListItem {
-	return defaultCache.DiffList(id, since)
+func ListDiff(id string, since time.Time) []ListItem {
+	return DefaultCache.ListDiff(id, since)
+}
+
+func Register(id string, gen Generator) {
+	DefaultCache.Register(id, gen)
+}
+
+func Depends(fid string, oids ...string) {
+	DefaultCache.Depends(fid, oids...)
+}
+
+func Invalidate(oid string) {
+	DefaultCache.Invalidate(oid)
+}
+
+// DefaultParser
+
+var DefaultParser = Parser{"{{", "}}"}
+
+func Parse(s string) (Template, error) {
+	return DefaultParser.Parse(s)
 }

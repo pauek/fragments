@@ -20,37 +20,28 @@ const tHome = `
 `
 
 var layout frag.Template
-var cache *frag.Cache
 
 func init() {
-	layout, _ = frag.Parse(tLayout, "{{", "}}")
-	cache = frag.NewCache()
+	layout, _ = frag.Parse(tLayout)
 }
-
-type Page string
-
 
 func fHome(C *frag.Cache, args []string) frag.Fragment {
 	return frag.Text(tHome)
 }
 
 func fPage(C *frag.Cache, args []string) frag.Fragment {
-	return frag.RenderFunc(func (w io.Writer, C *frag.Cache, m frag.Mode) {
-		layout.Each(func (f frag.Fragment) {
-			if _, ok := f.(frag.Ref); ok {
-				C.Render(w, args[1]) // assume 'body'
-				return
-			}
-			f.Render(w, C, m)
-		})
+	return layout.RenderFn(func(w io.Writer, id string, mode frag.Mode) {
+		if id == "body" && mode == frag.Recursive {
+			C.Get(args[1]).Render(w, C, mode)
+		}
 	})
 }
 
 func main() {
-	cache.Register("page", fPage)
-	cache.Register("home", fHome)
+	frag.Register("page", fPage)
+	frag.Register("home", fHome)
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
-		cache.Render(w, "page "+req.URL.Path[1:])
+		frag.Render(w, "page "+req.URL.Path[1:])
 	})
 	http.ListenAndServe(":8080", nil)
 }
