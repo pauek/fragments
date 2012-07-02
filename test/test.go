@@ -6,18 +6,9 @@ import (
 	"net/http"
 )
 
-const tLayout = `
-<!doctype html>
-<html>
-  <head></head>
-  <body>{{body}}</body>
-</html>
-`
-
-const tHome = `
-<h1>Home</h1>
-<p>This is the home page</p>
-`
+const tLayout = `<!doctype html><html><head></head><body>{{body}}</body></html>`
+const tHome = `<h1>Home</h1>{{hometext}}`
+const tHomeText = `<p>This is the home page</p>`
 
 var layout frag.Template
 
@@ -26,13 +17,14 @@ func init() {
 }
 
 func fHome(C *frag.Cache, args []string) frag.Fragment {
-	return frag.Text(tHome)
+	t, _ := frag.Parse(tHome)
+	return t
 }
 
 func fPage(C *frag.Cache, args []string) frag.Fragment {
 	return layout.RenderFn(func(w io.Writer, id string, mode frag.Mode) {
 		if id == "body" && mode == frag.Recursive {
-			C.Get(args[1]).Render(w, C, mode)
+			C.Render(w, args[1])
 		}
 	})
 }
@@ -40,6 +32,7 @@ func fPage(C *frag.Cache, args []string) frag.Fragment {
 func main() {
 	frag.Register("page", fPage)
 	frag.Register("home", fHome)
+	frag.Register("hometext", frag.StaticText(tHomeText))
 	http.HandleFunc("/", func(w http.ResponseWriter, req *http.Request) {
 		frag.Render(w, "page "+req.URL.Path[1:])
 	})

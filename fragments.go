@@ -128,7 +128,7 @@ func (t Template) RenderFn(fn func(_w io.Writer, _id string, _m Mode)) RenderFn 
 type RenderFn func(w io.Writer, C *Cache, mode Mode)
 
 func (f RenderFn) Render(w io.Writer, C *Cache, m Mode) { f(w, C, m) }
-func (f RenderFn) EachChild(fn func(id string)) {}
+func (f RenderFn) EachChild(fn func(id string))         {}
 
 // Cache
 
@@ -184,8 +184,20 @@ func (C *Cache) Register(id string, gen Generator) {
 	C.registry[id] = gen
 }
 
+func Static(f Fragment) Generator {
+	return func(C *Cache, args []string) Fragment {
+		return f
+	}
+}
+
+func StaticText(text string) Generator {
+	return Static(Text(text))
+}
+
 func (C *Cache) Render(w io.Writer, id string) {
+	fmt.Fprintf(w, `<div fragment="%s">`, id)
 	C.get(id).frag.Render(w, C, Recursive)
+	fmt.Fprintf(w, `</div>`)
 }
 
 type ListItem struct {
@@ -227,9 +239,10 @@ func (C *Cache) Invalidate(oid string) {
 	}
 }
 
-// DefaultCache
+// Defaults
 
 var DefaultCache *Cache
+var DefaultParser = Parser{"{{", "}}"}
 
 func init() {
 	DefaultCache = NewCache()
@@ -262,10 +275,6 @@ func Depends(fid string, oids ...string) {
 func Invalidate(oid string) {
 	DefaultCache.Invalidate(oid)
 }
-
-// DefaultParser
-
-var DefaultParser = Parser{"{{", "}}"}
 
 func Parse(s string) (Template, error) {
 	return DefaultParser.Parse(s)
