@@ -27,6 +27,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
+	_ "log"
 	"strings"
 	"time"
 )
@@ -105,6 +107,8 @@ func (t Template) Render(w io.Writer, C *Cache, mode Mode) {
 	t.Exec(w, func(id string) {
 		if mode == Recursive {
 			C.Render(w, id)
+		} else {
+			inDiv(w, id, nil)
 		}
 	})
 }
@@ -119,9 +123,9 @@ func (t Template) EachChild(fn func(id string)) {
 
 func (t Template) RenderFn(fn func(_w io.Writer, _id string)) RenderFn {
 	return RenderFn(func(w io.Writer, C *Cache, mode Mode) {
-		t.Exec(w, func(id string) { 
-			if mode == Recursive { 
-				fn(w, id) 
+		t.Exec(w, func(id string) {
+			if mode == Recursive {
+				fn(w, id)
 			}
 		})
 	})
@@ -168,6 +172,8 @@ func (C *Cache) get(id string) *cacheItem {
 			stamp: time.Now(),
 		}
 		C.cache[id] = f
+	} else {
+		// log.Printf("Hit: %q", id)
 	}
 	return f
 }
@@ -199,29 +205,50 @@ func StaticText(text string) Generator {
 	return Static(Text(text))
 }
 
-func (C *Cache) Render(w io.Writer, id string) {
+func inDiv(w io.Writer, id string, fn func()) {
 	fmt.Fprintf(w, `<div fragment="%s">`, id)
-	C.get(id).frag.Render(w, C, Recursive)
+	if fn != nil {
+		fn()
+	}
 	fmt.Fprintf(w, `</div>`)
 }
 
-type ListItem struct {
-	id, text string
+func (C *Cache) Render(w io.Writer, id string) {
+	inDiv(w, id, func () {
+		C.get(id).frag.Render(w, C, Recursive)
+	})
 }
 
-func (C *Cache) ListDiff(id string, since time.Time) (list []ListItem) {
-	list = []ListItem{{id: id}}
+type ListItem struct {
+	Id, Html string
+	Stamp time.Time
+}
+
+func (C *Cache) listDiff(id string, since time.Time) (list []ListItem) {
 	item := C.get(id)
+	list = []ListItem{{Id: id, Stamp: item.stamp}}
 	if item.stamp.After(since) {
 		var b bytes.Buffer
-		item.frag.Render(&b, C, NonRecursive)
-		list[0].text = b.String()
+		inDiv(&b, id, func () {
+			item.frag.Render(&b, C, NonRecursive)
+		})
+		list[0].Html = b.String()
 	}
 	item.frag.EachChild(func(id string) {
-		sublist := C.List(id)
+		sublist := C.listDiff(id, since)
 		list = append(list, sublist...)
 	})
 	return
+}
+
+func addRoot(id string, list []ListItem) []ListItem {
+	root := ListItem{Id: "_root", Stamp: time.Now()}
+	root.Html = fmt.Sprintf(`<div fragment="%s"></div>`, id)
+	return append([]ListItem{root}, list...)
+}
+
+func (C *Cache) ListDiff(id string, since time.Time) (list []ListItem) {
+	return addRoot(id, C.listDiff(id, since))
 }
 
 func (C *Cache) List(id string) []ListItem {
@@ -245,7 +272,7 @@ func (C *Cache) Invalidate(id string) {
 // Defaults
 
 var DefaultCache *Cache
-var DefaultParser = Parser{"{{", "}}"}
+var DefaultParser = Parser{"{% ", " %}"}
 
 func init() {
 	DefaultCache = NewCache()
@@ -284,9 +311,15 @@ func Parse(s string) (Template, error) {
 }
 
 func MustParse(s string) (t Template) {
-	t, err := Parse(s)
-	if err != nil {
-		panic(fmt.Sprintf("Cannot Parse"))
+	if t, err := Parse(s); err == nil {
+		return t
 	}
-	return
+	panic(fmt.Sprintf("Cannot Parse"))
+}
+
+func MustParseFile(filename string) (t Template) {
+	if data, err := ioutil.ReadFile(filename); err == nil {
+		return MustParse(string(data))
+	}
+	panic(fmt.Sprintf("Cannot Read File '%s'", filename))
 }

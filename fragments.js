@@ -7,7 +7,11 @@ if (window.localStorage) {
 }
 
 fragments.log = function(message) {
-   console.log("fragments:" + message);
+   if (message) {
+      console.log("fragments: " + message);
+   } else {
+      console.log("");
+   }
 }
 
 fragments.getHtml = function(id) {
@@ -30,7 +34,7 @@ fragments.store = function(url, item) {
 }
 
 fragments.replace = function(item) {
-   if (item.Html === undefined) {
+   if (item.Html === "") {
       item.Html = fragments.getHtml(item.Id);
    } else {
       fragments.log('replace("' + item.Id + '")');
@@ -130,6 +134,7 @@ fragments.replaceLinks = function() {
       history.pushState(url, null, url);
    })
    fragments._notify();
+   fragments.log();
 }
 
 fragments._fns = []
@@ -151,6 +156,7 @@ fragments._notify = function() {
 
 fragments._onpopstate = function(ev) {
    fragments.log("_onpopstate(" + JSON.stringify(ev.state) + ")")
+   fragments.log();
    if (ev.state === null) {
       history.replaceState("reload", null, document.location.pathname);
    } else if (ev.state === "reload") {
