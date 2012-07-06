@@ -117,9 +117,13 @@ func (t Template) EachChild(fn func(id string)) {
 	}
 }
 
-func (t Template) RenderFn(fn func(_w io.Writer, _id string, _m Mode)) RenderFn {
-	return RenderFn(func(w io.Writer, C *Cache, m Mode) {
-		t.Exec(w, func(id string) { fn(w, id, m) })
+func (t Template) RenderFn(fn func(_w io.Writer, _id string)) RenderFn {
+	return RenderFn(func(w io.Writer, C *Cache, mode Mode) {
+		t.Exec(w, func(id string) { 
+			if mode == Recursive { 
+				fn(w, id) 
+			}
+		})
 	})
 }
 
@@ -134,12 +138,12 @@ func (f RenderFn) EachChild(fn func(id string))         {}
 
 type cacheItem struct {
 	frag  Fragment
-	valid bool
 	stamp time.Time
 }
 
 type Cache struct {
 	cache    map[string]*cacheItem
+	valid    map[string]bool
 	registry map[string]Generator
 	depends  map[string]map[string]bool
 }
@@ -149,6 +153,7 @@ type Generator func(C *Cache, args []string) Fragment
 func NewCache() *Cache {
 	C := new(Cache)
 	C.cache = make(map[string]*cacheItem)
+	C.valid = make(map[string]bool)
 	C.registry = make(map[string]Generator)
 	C.depends = make(map[string]map[string]bool)
 	return C
@@ -156,10 +161,10 @@ func NewCache() *Cache {
 
 func (C *Cache) get(id string) *cacheItem {
 	f, ok := C.cache[id]
-	if !ok || !f.valid {
+	if !ok || !C.valid[id] {
+		C.valid[id] = true
 		f = &cacheItem{
 			frag:  C.generate(id),
-			valid: true,
 			stamp: time.Now(),
 		}
 		C.cache[id] = f
@@ -233,10 +238,8 @@ func (C *Cache) Depends(fid string, oids ...string) {
 	}
 }
 
-func (C *Cache) Invalidate(oid string) {
-	for fid, _ := range C.depends[oid] {
-		C.get(fid).valid = false
-	}
+func (C *Cache) Invalidate(id string) {
+	C.valid[id] = false
 }
 
 // Defaults
@@ -272,10 +275,18 @@ func Depends(fid string, oids ...string) {
 	DefaultCache.Depends(fid, oids...)
 }
 
-func Invalidate(oid string) {
-	DefaultCache.Invalidate(oid)
+func Invalidate(id string) {
+	DefaultCache.Invalidate(id)
 }
 
 func Parse(s string) (Template, error) {
 	return DefaultParser.Parse(s)
+}
+
+func MustParse(s string) (t Template) {
+	t, err := Parse(s)
+	if err != nil {
+		panic(fmt.Sprintf("Cannot Parse"))
+	}
+	return
 }

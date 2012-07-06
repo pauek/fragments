@@ -22,8 +22,8 @@ func fHome(C *frag.Cache, args []string) frag.Fragment {
 }
 
 func fPage(C *frag.Cache, args []string) frag.Fragment {
-	return layout.RenderFn(func(w io.Writer, id string, mode frag.Mode) {
-		if id == "body" && mode == frag.Recursive {
+	return layout.RenderFn(func(w io.Writer, id string) {
+		if id == "body" {
 			C.Render(w, args[1])
 		}
 	})
