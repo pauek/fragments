@@ -191,8 +191,10 @@ func (C *Cache) generate(id string) Fragment {
 	return gen(C, args)
 }
 
-func (C *Cache) Register(id string, gen Generator) {
-	C.registry[id] = gen
+func (C *Cache) Register(gen Generator, ids ...string) {
+	for _, id := range ids {
+		C.registry[id] = gen
+	}
 }
 
 func Static(f Fragment) Generator {
