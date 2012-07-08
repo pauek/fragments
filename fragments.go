@@ -256,6 +256,9 @@ func (C *Cache) List(id string) []ListItem {
 	return C.ListDiff(id, zerotime)
 }
 
+// Declare dependencies: fragment fid depends on all objects in the
+// oids list
+//
 func (C *Cache) Depends(fid string, oids ...string) {
 	for _, oid := range oids {
 		if C.depends[oid] == nil {
@@ -265,46 +268,25 @@ func (C *Cache) Depends(fid string, oids ...string) {
 	}
 }
 
-func (C *Cache) Invalidate(id string) {
-	C.valid[id] = false
+// Invalidate fragment with ID fid (if it exists)
+//
+func (C *Cache) Invalidate(fid string) {
+	if _, found := C.valid[fid]; found {
+		C.valid[fid] = false
+	}
 }
 
-// Defaults
+// Invalidate all fragments associated with object oid
+//
+func (C *Cache) Touch(oid string) {
+	for fid := range C.depends[oid] {
+		C.Invalidate(fid)
+	}
+}
 
-var DefaultCache *Cache
+// Default Parser
+
 var DefaultParser = Parser{"{% ", " %}"}
-
-func init() {
-	DefaultCache = NewCache()
-}
-
-func Get(id string) Fragment {
-	return DefaultCache.Get(id)
-}
-
-func Render(w io.Writer, id string) {
-	DefaultCache.Render(w, id)
-}
-
-func List(id string) []ListItem {
-	return DefaultCache.List(id)
-}
-
-func ListDiff(id string, since time.Time) []ListItem {
-	return DefaultCache.ListDiff(id, since)
-}
-
-func Register(id string, gen Generator) {
-	DefaultCache.Register(id, gen)
-}
-
-func Depends(fid string, oids ...string) {
-	DefaultCache.Depends(fid, oids...)
-}
-
-func Invalidate(id string) {
-	DefaultCache.Invalidate(id)
-}
 
 func Parse(s string) (Template, error) {
 	return DefaultParser.Parse(s)
