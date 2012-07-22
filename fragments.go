@@ -30,6 +30,7 @@ import (
 	"io/ioutil"
 	_ "log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -146,6 +147,7 @@ type cacheItem struct {
 }
 
 type Cache struct {
+	mutex    sync.Mutex
 	cache    map[string]*cacheItem
 	valid    map[string]bool
 	registry map[string]Generator
@@ -164,6 +166,7 @@ func NewCache() *Cache {
 }
 
 func (C *Cache) get(id string) *cacheItem {
+	C.mutex.Lock()
 	f, ok := C.cache[id]
 	if !ok || !C.valid[id] {
 		C.valid[id] = true
@@ -175,6 +178,7 @@ func (C *Cache) get(id string) *cacheItem {
 	} else {
 		// log.Printf("Hit: %q", id)
 	}
+	C.mutex.Unlock()
 	return f
 }
 
@@ -192,9 +196,11 @@ func (C *Cache) generate(id string) Fragment {
 }
 
 func (C *Cache) Register(gen Generator, ids ...string) {
+	C.mutex.Lock()
 	for _, id := range ids {
 		C.registry[id] = gen
 	}
+	C.mutex.Unlock()
 }
 
 func Static(f Fragment) Generator {
@@ -216,14 +222,14 @@ func inDiv(w io.Writer, id string, fn func()) {
 }
 
 func (C *Cache) Render(w io.Writer, id string) {
-	inDiv(w, id, func () {
+	inDiv(w, id, func() {
 		C.get(id).frag.Render(w, C, Recursive)
 	})
 }
 
 type ListItem struct {
 	Id, Html string
-	Stamp time.Time
+	Stamp    time.Time
 }
 
 func (C *Cache) listDiff(id string, since time.Time) (list []ListItem) {
@@ -231,7 +237,7 @@ func (C *Cache) listDiff(id string, since time.Time) (list []ListItem) {
 	list = []ListItem{{Id: id, Stamp: item.stamp}}
 	if item.stamp.After(since) {
 		var b bytes.Buffer
-		inDiv(&b, id, func () {
+		inDiv(&b, id, func() {
 			item.frag.Render(&b, C, NonRecursive)
 		})
 		list[0].Html = b.String()
@@ -262,20 +268,26 @@ func (C *Cache) List(id string) []ListItem {
 // oids list
 //
 func (C *Cache) Depends(fid string, oids ...string) {
+	C.mutex.Lock()
 	for _, oid := range oids {
 		if C.depends[oid] == nil {
 			C.depends[oid] = make(map[string]bool)
 		}
 		C.depends[oid][fid] = true
 	}
+	C.mutex.Unlock()
 }
 
 // Invalidate fragment with ID fid (if it exists)
 //
 func (C *Cache) Invalidate(fid string) {
+	C.mutex.Lock()
 	if _, found := C.valid[fid]; found {
+		fmt.Printf("Invalidate: '%s'\n", fid)
 		C.valid[fid] = false
 	}
+	C.mutex.Unlock()
+	// notify observers
 }
 
 // Invalidate all fragments associated with object oid
