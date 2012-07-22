@@ -125,21 +125,26 @@ fragments.load = function(url) {
    $('html, body').scrollTop(0); // Go to top
 }
 
+fragments.follow = function(link) {
+   var url = $(link).attr("href")
+   fragments.log("follow: " + url);
+   fragments.load(url);
+   history.pushState(url, null, url);
+}
+
 fragments.replaceLinks = function() {
    fragments.log("replaceLinks()");
    $('a[ajx]').click(function (ev) {
       ev.preventDefault();
-      var url = $(this).attr("href")
-      fragments.load(url);
-      history.pushState(url, null, url);
-   })
+      fragments.follow(this);
+   });
    fragments._notify();
    fragments.log();
 }
 
 fragments._fns = []
 
-fragments.onUpdate = function(fn) {
+fragments.ready = function(fn) {
    fragments._fns.push(fn);
 }
 
