@@ -166,19 +166,22 @@ func NewCache() *Cache {
 }
 
 func (C *Cache) get(id string) *cacheItem {
-	C.mutex.Lock()
 	f, ok := C.cache[id]
 	if !ok || !C.valid[id] {
+		C.mutex.Lock()
 		C.valid[id] = true
+		C.mutex.Unlock()
+
 		f = &cacheItem{
 			frag:  C.generate(id),
 			stamp: time.Now(),
 		}
+		C.mutex.Lock()
 		C.cache[id] = f
+		C.mutex.Unlock()
 	} else {
 		// log.Printf("Hit: %q", id)
 	}
-	C.mutex.Unlock()
 	return f
 }
 
