@@ -242,7 +242,7 @@ type ListItem struct {
 	Stamp    time.Time
 }
 
-func (C *Cache) listDiff(id string, since time.Time) (list []ListItem) {
+func (C *Cache) Diff(id string, since time.Time) (list []ListItem) {
 	item := C.get(id)
 	list = []ListItem{{Id: id, Stamp: item.stamp}}
 	if item.stamp.After(since) {
@@ -253,25 +253,10 @@ func (C *Cache) listDiff(id string, since time.Time) (list []ListItem) {
 		list[0].Html = b.String()
 	}
 	item.frag.EachChild(func(id string) {
-		sublist := C.listDiff(id, since)
+		sublist := C.Diff(id, since)
 		list = append(list, sublist...)
 	})
 	return
-}
-
-func addRoot(id string, list []ListItem) []ListItem {
-	root := ListItem{Id: "_root", Stamp: time.Now()}
-	root.Html = fmt.Sprintf(`<div fragment="%s"></div>`, id)
-	return append([]ListItem{root}, list...)
-}
-
-func (C *Cache) ListDiff(id string, since time.Time) (list []ListItem) {
-	return addRoot(id, C.listDiff(id, since))
-}
-
-func (C *Cache) List(id string) []ListItem {
-	var zerotime time.Time
-	return C.ListDiff(id, zerotime)
 }
 
 // Declare dependencies: fragment fid depends on all objects in the
