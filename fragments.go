@@ -230,6 +230,13 @@ func (C *Cache) Render(w io.Writer, id string) {
 	})
 }
 
+func (C *Cache) RenderToString(id string) string {
+   var b bytes.Buffer
+   C.Render(&b, id)
+   return b.String()
+}
+
+
 type ListItem struct {
 	Id, Html string
 	Stamp    time.Time
